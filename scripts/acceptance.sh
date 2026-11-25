@@ -27,14 +27,16 @@ json() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 desc="doctor reaches the API"; check "$bin" doctor
 desc="auth status hides the token"; check bash -c '! "$bin" auth status 2>&1 | grep -qF "$UPTIMEIFY_TOKEN"'
 
-name="cli-acceptance-$$"
+# Tag names are limited to 24 characters and need a color.
+name="cliacc-$$"
 export name
-id="$("$bin" tags create --field "name=$name" --json | json 'd.get("id") or d["tag"]["id"]' 2>/dev/null)" || id=""
+id="$("$bin" tags create --field "name=$name" --field "color=green" --json | json 'd.get("id") or d["tag"]["id"]' 2>/dev/null)" || id=""
 export id
 desc="tags create returns an id"; check test -n "$id"
 desc="tags list shows the new tag"; check bash -c '"$bin" tags list --json | grep -q "$name"'
-desc="tags update renames it"; check "$bin" tags update "$id" --field "name=$name-renamed" --json
+desc="tags update renames it"; check "$bin" tags update "$id" --field "name=$name-r" --json
 desc="tags delete refuses without --yes when not interactive"; check bash -c '! "$bin" tags delete "$id" </dev/null >/dev/null 2>&1'
+desc="the tag still exists after the refused delete"; check bash -c '"$bin" tags list --json | grep -q "$name"'
 desc="tags delete with --yes works"; check "$bin" tags delete "$id" --yes
 desc="deleted tag is gone from the list"; check bash -c '! "$bin" tags list --json | grep -q "$name"'
 
