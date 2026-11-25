@@ -8,7 +8,8 @@ import (
 
 var camelBoundary = regexp.MustCompile(`([a-z0-9])([A-Z])`)
 
-func kebab(s string) string {
+// Kebab turns camelCase and snake_case into kebab-case. It names path segments and query flags.
+func Kebab(s string) string {
 	s = camelBoundary.ReplaceAllString(s, "$1-$2")
 	return strings.ToLower(strings.ReplaceAll(s, "_", "-"))
 }
@@ -37,7 +38,7 @@ func DeriveName(method, path string, hasChildParam bool) []string {
 	var name []string
 	for _, seg := range segs {
 		if !isParam(seg) {
-			name = append(name, kebab(seg))
+			name = append(name, Kebab(seg))
 		}
 	}
 	collection := hasChildParam && !isParam(segs[len(segs)-1])
@@ -56,7 +57,8 @@ func DeriveName(method, path string, hasChildParam bool) []string {
 		return append(name, "update")
 	case "put":
 		return append(name, "set")
-	default:
+	case "delete":
 		return append(name, "delete")
 	}
+	panic("gen: unsupported HTTP method " + method) // Build rejects them before it gets here
 }

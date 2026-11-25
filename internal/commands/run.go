@@ -121,7 +121,7 @@ func execute(c *cobra.Command, args []string, op gen.Op, d Deps) error {
 	}
 	query := url.Values{}
 	for _, q := range op.Query {
-		if f := c.Flags().Lookup(flagName(q.Name)); f != nil && f.Changed {
+		if f := c.Flags().Lookup(gen.Kebab(q.Name)); f != nil && f.Changed {
 			query.Set(q.Name, f.Value.String())
 		}
 	}

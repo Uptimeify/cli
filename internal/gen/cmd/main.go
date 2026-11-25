@@ -40,10 +40,10 @@ func main() {
 		if flag.NArg() != 2 {
 			fail(fmt.Errorf("-check-breaking needs <old> <new>"))
 		}
-		if gone := gen.Removed(readOps(flag.Arg(0)), readOps(flag.Arg(1))); len(gone) > 0 {
-			fmt.Fprintln(os.Stderr, "removed or renamed commands (needs a major version):")
-			for _, g := range gone {
-				fmt.Fprintln(os.Stderr, "  uptimeify", g)
+		if found := gen.Breaking(readOps(flag.Arg(0)), readOps(flag.Arg(1))); len(found) > 0 {
+			fmt.Fprintln(os.Stderr, "breaking changes to commands (needs a major version):")
+			for _, g := range found {
+				fmt.Fprintln(os.Stderr, " ", g)
 			}
 			os.Exit(1)
 		}

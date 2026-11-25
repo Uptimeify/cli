@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/url"
-	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -38,12 +37,6 @@ func Ops() ([]gen.Op, error) {
 	var ops []gen.Op
 	err := json.Unmarshal(manifest, &ops)
 	return ops, err
-}
-
-var camelBoundary = regexp.MustCompile(`([a-z0-9])([A-Z])`)
-
-func flagName(param string) string {
-	return strings.ToLower(strings.ReplaceAll(camelBoundary.ReplaceAllString(param, "$1-$2"), "_", "-"))
 }
 
 func child(parent *cobra.Command, name string) *cobra.Command {
@@ -85,7 +78,7 @@ func Register(root *cobra.Command, ops []gen.Op, d Deps) {
 			if len(q.Enum) > 0 {
 				help = strings.TrimSpace(help + " One of: " + strings.Join(q.Enum, ", ") + ".")
 			}
-			cmd.Flags().String(flagName(q.Name), "", help)
+			cmd.Flags().String(gen.Kebab(q.Name), "", help)
 		}
 		if op.HasBody {
 			cmd.Flags().String("body", "", "JSON request body: a file path, or - for standard input")

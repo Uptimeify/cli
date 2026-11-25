@@ -10,6 +10,12 @@ import (
 
 var methods = []string{"get", "post", "put", "patch", "delete"}
 
+// reservedCommands are top-level names taken by hand-written or cobra built-in commands.
+var reservedCommands = map[string]bool{"auth": true, "doctor": true, "help": true, "completion": true, "version": true, "config": true}
+
+// reservedFlags are flags every generated command may carry itself or inherit.
+var reservedFlags = map[string]bool{"json": true, "body": true, "field": true, "yes": true, "help": true}
+
 type rawParam struct {
 	Name        string `json:"name"`
 	In          string `json:"in"`
@@ -130,6 +136,11 @@ func Build(spec []byte, overrides map[string]string) ([]Op, error) {
 	for _, path := range paths {
 		item := doc.Paths[path]
 		_, hasChildParam := childParam(doc.Paths, path)
+		for _, m := range []string{"head", "options", "trace"} {
+			if _, ok := item[m]; ok {
+				return nil, fmt.Errorf("%s %s: unsupported HTTP method, the generator handles only %s", strings.ToUpper(m), path, strings.Join(methods, ", "))
+			}
+		}
 		for _, method := range methods {
 			raw, ok := item[method]
 			if !ok {
@@ -144,16 +155,28 @@ func Build(spec []byte, overrides map[string]string) ([]Op, error) {
 			if o, ok := overrides[key]; ok {
 				name = strings.Fields(o)
 			}
+			if len(name) == 0 || reservedCommands[name[0]] {
+				return nil, fmt.Errorf("%s: command name %q starts with a reserved name (%s), add an entry to overrides.json", key, strings.Join(name, " "), "auth, doctor, help, completion, version, config")
+			}
 			joined := strings.Join(name, " ")
 			if other, dup := seen[joined]; dup {
 				return nil, fmt.Errorf("command name %q is used by %q and %q, add an entry to overrides.json", joined, other, key)
 			}
 			seen[joined] = key
 			op := Op{Name: name, Method: strings.ToUpper(method), Path: path, ID: ro.OperationID, Summary: ro.Summary, PathParams: PathParams(path)}
+			flags := map[string]string{}
 			for _, p := range ro.Parameters {
 				if p.In != "query" {
 					continue
 				}
+				fl := Kebab(p.Name)
+				if reservedFlags[fl] {
+					return nil, fmt.Errorf("%s: query parameter %q becomes the reserved flag --%s", key, p.Name, fl)
+				}
+				if other, dup := flags[fl]; dup {
+					return nil, fmt.Errorf("%s: query parameters %q and %q both become the flag --%s", key, other, p.Name, fl)
+				}
+				flags[fl] = p.Name
 				prm := Param{Name: p.Name, Type: typeName(p.Schema.Type), Required: p.Required, Description: p.Description}
 				for _, e := range p.Schema.Enum {
 					prm.Enum = append(prm.Enum, fmt.Sprint(e))
@@ -187,18 +210,61 @@ func childParam(paths map[string]map[string]json.RawMessage, path string) (strin
 	return "", false
 }
 
+func commandName(op Op) string { return strings.Join(op.Name, " ") }
+
 // Removed lists command names that exist in old but not in cur.
 func Removed(old, cur []Op) []string {
 	have := map[string]bool{}
 	for _, op := range cur {
-		have[strings.Join(op.Name, " ")] = true
+		have[commandName(op)] = true
 	}
 	var gone []string
 	for _, op := range old {
-		if n := strings.Join(op.Name, " "); !have[n] {
+		if n := commandName(op); !have[n] {
 			gone = append(gone, n)
 		}
 	}
 	sort.Strings(gone)
 	return gone
+}
+
+// Breaking lists, one line per finding, what a script could notice between two manifests: a
+// command that is gone, a command whose method, path or number of path parameters changed, and a
+// query flag that is gone. New commands and new flags are not reported.
+func Breaking(old, cur []Op) []string {
+	var out []string
+	for _, n := range Removed(old, cur) {
+		out = append(out, "uptimeify "+n+": removed or renamed")
+	}
+	now := map[string]Op{}
+	for _, op := range cur {
+		now[commandName(op)] = op
+	}
+	for _, o := range old {
+		n := commandName(o)
+		c, ok := now[n]
+		if !ok {
+			continue
+		}
+		if o.Method != c.Method {
+			out = append(out, fmt.Sprintf("uptimeify %s: method changed (%s -> %s)", n, o.Method, c.Method))
+		}
+		if o.Path != c.Path {
+			out = append(out, fmt.Sprintf("uptimeify %s: path changed (%s -> %s)", n, o.Path, c.Path))
+		}
+		if len(o.PathParams) != len(c.PathParams) {
+			out = append(out, fmt.Sprintf("uptimeify %s: path parameters changed (%d -> %d)", n, len(o.PathParams), len(c.PathParams)))
+		}
+		have := map[string]bool{}
+		for _, q := range c.Query {
+			have[Kebab(q.Name)] = true
+		}
+		for _, q := range o.Query {
+			if f := Kebab(q.Name); !have[f] {
+				out = append(out, fmt.Sprintf("uptimeify %s: query flag --%s removed", n, f))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
