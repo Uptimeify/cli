@@ -9,11 +9,11 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -47,11 +47,11 @@ jobs:
   release-chain:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -71,16 +71,21 @@ jobs:
           sc -s sh scripts/install.sh scripts/install_test.sh
           sc -S warning scripts/check-commit-messages.sh scripts/acceptance.sh
       - run: scripts/install_test.sh
-      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        with:
-          distribution: goreleaser
-          version: v2.20.3
-          args: check
-      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        with:
-          distribution: goreleaser
-          version: v2.20.3
-          args: release --snapshot --clean --skip=publish,sign,notarize
+      # Same install as release.yml: `go install` is verified by the Go checksum database,
+      # goreleaser-action is not (it only warns when its own verification fails).
+      - name: install goreleaser v2.20.3 (verified by the Go checksum database)
+        working-directory: ${{ runner.temp }}
+        env:
+          GOFLAGS: ""
+        run: |
+          set -eu
+          unset GONOSUMCHECK GONOSUMDB GOINSECURE GOPRIVATE GONOPROXY
+          export GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org
+          go install github.com/goreleaser/goreleaser/v2@v2.20.3
+      - name: goreleaser check
+        run: '"$(go env GOPATH)/bin/goreleaser" check'
+      - name: goreleaser snapshot build
+        run: '"$(go env GOPATH)/bin/goreleaser" release --snapshot --clean --skip=publish,sign,notarize'
       - name: the image runs and reports the injected version
         run: |
           img="$(docker image ls --format '{{.Repository}}:{{.Tag}}' ghcr.io/uptimeify/cli | grep -- '-amd64$' | head -n 1)"

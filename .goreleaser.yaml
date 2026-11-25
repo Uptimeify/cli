@@ -135,7 +135,10 @@ dockers_v2:
       "index,manifest:org.opencontainers.image.revision": "{{ .FullCommit }}"
       "index,manifest:org.opencontainers.image.version": "{{ .Version }}"
       "index,manifest:org.opencontainers.image.licenses": MPL-2.0
-    sbom: true
+    # No BuildKit SBOM attestation. It would pull docker/buildkit-syft-scanner by tag, and
+    # GoReleaser's `flags` also reach the `--load` builds, where an attestation does not apply, so the
+    # scanner image cannot be pinned by digest here. The archive SBOMs (syft, pinned) stay.
+    sbom: false
 
 # Keyless signature of the image by digest (not by tag).
 docker_signs:

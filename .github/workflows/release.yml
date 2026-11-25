@@ -16,7 +16,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -54,10 +54,13 @@ jobs:
           else
             echo "::warning::tag $TAG is annotated but not signed"
           fi
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      # cache: false on purpose. A tag run must never restore a Go cache that another run (a pull
+      # request, a branch) saved: that is how a poisoned build cache would reach a signed release.
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           check-latest: true
+          cache: false
       - run: go vet ./...
       - run: go test -race -count=1 ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
@@ -73,7 +76,7 @@ jobs:
       packages: write # push ghcr.io/uptimeify/cli
       attestations: write # build provenance
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -88,10 +91,13 @@ jobs:
           [ "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$SHA" ] || {
             echo "tag $TAG moved since the verify job" >&2; exit 1
           }
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      # cache: false on purpose. A tag run must never restore a Go cache that another run (a pull
+      # request, a branch) saved: that is how a poisoned build cache would reach a signed release.
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           check-latest: true
+          cache: false
       - uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
         with:
           cosign-release: v3.1.6
@@ -103,16 +109,31 @@ jobs:
           cosign version
           syft version
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          # The BuildKit image does the image build. Pinned by digest (moby/buildkit v0.35.1, the
+          # multi-arch index digest), so a moved tag cannot change the builder.
+          driver-opts: image=moby/buildkit:v0.35.1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        with:
-          distribution: goreleaser
-          version: v2.20.3
-          args: release --clean
+      # GoReleaser is installed with `go install`, not with goreleaser-action: the action only warns
+      # when its checksum/bundle download fails and verifies with cosign only if cosign happens
+      # to be on PATH. `go install` checks the module against the Go checksum database
+      # (sum.golang.org) and fails closed. Run outside the checkout so go.mod is not touched.
+      - name: install goreleaser v2.20.3 (verified by the Go checksum database)
+        working-directory: ${{ runner.temp }}
+        env:
+          GOFLAGS: ""
+        run: |
+          set -eu
+          unset GONOSUMCHECK GONOSUMDB GOINSECURE GOPRIVATE GONOPROXY
+          export GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org
+          go install github.com/goreleaser/goreleaser/v2@v2.20.3
+          "$(go env GOPATH)/bin/goreleaser" --version
+      - name: goreleaser release
+        run: '"$(go env GOPATH)/bin/goreleaser" release --clean'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Fine-grained PAT, only Uptimeify/homebrew-tap, contents: write.
