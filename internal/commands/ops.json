@@ -3873,7 +3873,7 @@
   "name": [
    "im",
    "reports",
-   "nis2-management.pdf",
+   "nis2-management-pdf",
    "get"
   ],
   "method": "GET",
@@ -7503,7 +7503,7 @@
  {
   "name": [
    "package-configs",
-   "update-by-id"
+   "update-by-type"
   ],
   "method": "PATCH",
   "path": "/api/package-configs/{packageType}",
@@ -10469,7 +10469,7 @@
  {
   "name": [
    "websites",
-   "report.pdf",
+   "report-pdf",
    "get"
   ],
   "method": "GET",

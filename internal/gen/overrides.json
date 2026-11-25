@@ -4,6 +4,8 @@
   "PATCH /api/organizations/{id}/billing": "organizations billing update-by-id",
   "PATCH /api/organizations/{id}/package-configs/{packageType}": "organizations package-configs update-by-id",
   "DELETE /api/organizations/{id}/package-configs/{packageType}": "organizations package-configs delete-by-id",
-  "PATCH /api/package-configs/{packageType}": "package-configs update-by-id",
-  "GET /api/status-pages/{id}/subscribers/export": "status-pages subscribers export get-by-id"
+  "PATCH /api/package-configs/{packageType}": "package-configs update-by-type",
+  "GET /api/status-pages/{id}/subscribers/export": "status-pages subscribers export get-by-id",
+  "GET /api/im/reports/nis2-management.pdf": "im reports nis2-management-pdf get",
+  "GET /api/websites/{id}/report.pdf": "websites report-pdf get"
 }

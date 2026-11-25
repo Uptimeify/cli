@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -52,8 +53,14 @@ func main() {
 	raw, err := os.ReadFile(*spec)
 	fail(err)
 	overrides := map[string]string{}
-	if b, err := os.ReadFile(*overridesPath); err == nil {
-		fail(json.Unmarshal(b, &overrides))
+	ob, err := os.ReadFile(*overridesPath)
+	switch {
+	case err == nil:
+		fail(json.Unmarshal(ob, &overrides))
+	case errors.Is(err, os.ErrNotExist) && *overridesPath == "internal/gen/overrides.json":
+		// default file absent: generate without overrides
+	default:
+		fail(err)
 	}
 	ops, err := gen.Build(raw, overrides)
 	fail(err)
