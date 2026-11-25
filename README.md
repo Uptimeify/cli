@@ -21,10 +21,12 @@ Until the binary is notarized by Apple, macOS may refuse to start it.
 
 The script will be served from `https://uptimeify.io/install.sh`. It installs the latest release
 (or `UPTIMEIFY_VERSION=X.Y.Z`) into `~/.local/bin` (or `UPTIMEIFY_INSTALL_DIR`), without sudo and not
-as root. It downloads over HTTPS only and checks the SHA-256 of the archive against `checksums.txt`.
-If `cosign` is installed it also verifies the signature of `checksums.txt`; if not, it says so and
-only the checksum is checked, which catches a damaged download but not a replaced release. Set
-`UPTIMEIFY_REQUIRE_SIGNATURE=1` to make a missing `cosign` an error.
+as root. It downloads over HTTPS only, checks the SHA-256 of the archive against `checksums.txt`, and
+then verifies the signature: with `cosign` if it is installed (signature of `checksums.txt`), else with
+the GitHub CLI (`gh attestation verify` of the archive). If neither is installed it stops and says how
+to install one. `UPTIMEIFY_ALLOW_UNSIGNED=1` continues with the checksum only, which catches a damaged
+download but gives no protection against a replaced release. It never skips a verification that
+failed. The install directory must be one you own.
 
 To read it before running it, instead of piping it into a shell:
 
@@ -39,7 +41,8 @@ The same script is in this repository as [scripts/install.sh](scripts/install.sh
     docker run --rm -e UPTIMEIFY_TOKEN ghcr.io/uptimeify/cli:X.Y.Z websites list
 
 The image is `linux/amd64` and `linux/arm64`, runs as a non-root user and contains only the binary
-and CA certificates.
+and CA certificates. To run exactly the image you verified, run it by digest (see below):
+`docker run --rm -e UPTIMEIFY_TOKEN ghcr.io/uptimeify/cli@sha256:<digest> websites list`.
 
 ### Build from source
 
@@ -60,7 +63,19 @@ attestations exist for the archives and the image.
       --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
       --bundle checksums.txt.sigstore.json checksums.txt
     sha256sum --check --ignore-missing checksums.txt
-    gh attestation verify uptimeify_X.Y.Z_linux_amd64.tar.gz --repo Uptimeify/cli
+    gh attestation verify uptimeify_X.Y.Z_linux_amd64.tar.gz --repo Uptimeify/cli \
+      --signer-workflow Uptimeify/cli/.github/workflows/release.yml \
+      --source-ref refs/tags/vX.Y.Z --deny-self-hosted-runners
+
+Image: resolve the digest once, verify that digest, and run that digest. A tag can move, a digest
+cannot.
+
+    digest="$(docker buildx imagetools inspect ghcr.io/uptimeify/cli:X.Y.Z --format '{{.Manifest.Digest}}')"
+    cosign verify \
+      --certificate-identity 'https://github.com/Uptimeify/cli/.github/workflows/release.yml@refs/tags/vX.Y.Z' \
+      --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+      "ghcr.io/uptimeify/cli@$digest"
+    docker run --rm "ghcr.io/uptimeify/cli@$digest" --version
 
 The full list of checks, including the image, is in [RELEASING.md](RELEASING.md).
 
