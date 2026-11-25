@@ -63,3 +63,62 @@ func TestTableCellsAreSanitized(t *testing.T) {
 		t.Fatalf("control characters reached the terminal: %q", buf.String())
 	}
 }
+
+func renderStr(t *testing.T, body, ct string, cols []string, asJSON bool) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := Render(&buf, []byte(body), ct, cols, asJSON); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
+}
+
+func TestPrettyObjectIsSanitized(t *testing.T) {
+	got := renderStr(t, "{\"name\":\"a\u009b2Jb\"}", "application/json", nil, false)
+	if strings.ContainsRune(got, '\u009b') || !strings.Contains(got, "a") || !strings.Contains(got, "b") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestMalformedJSONIsSanitized(t *testing.T) {
+	got := renderStr(t, "{\"a\":\"\x1b]0;x\x07", "application/json", nil, false)
+	if strings.ContainsAny(got, "\x1b\x07") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestJSONDetectedByMediaType(t *testing.T) {
+	for _, ct := range []string{"Application/JSON; charset=utf-8", "application/problem+json"} {
+		got := renderStr(t, `[{"id":1}]`, ct, []string{"id"}, false)
+		if !strings.HasPrefix(got, "ID") {
+			t.Fatalf("%s: got %q", ct, got)
+		}
+	}
+}
+
+func TestTextIsSanitizedKeepingNewlineAndTab(t *testing.T) {
+	got := renderStr(t, "line1\n\x1b[31mred\tx", "text/plain", nil, false)
+	if got != "line1\n[31mred\tx" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestPDFIsRaw(t *testing.T) {
+	body := "%PDF\x1b\x00\xff"
+	if got := renderStr(t, body, "application/pdf", nil, false); got != body {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestAsJSONKeepsRawBytes(t *testing.T) {
+	body := "{\"a\":\"x\u009by\"}"
+	if got := renderStr(t, body, "application/json", nil, true); got != body+"\n" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestSanitizeBidiKeepsZWJ(t *testing.T) {
+	if got := Sanitize("a\u202eb\u2066c\u200dd"); got != "abc\u200dd" {
+		t.Fatalf("got %q", got)
+	}
+}

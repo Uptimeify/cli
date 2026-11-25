@@ -1,5 +1,5 @@
 // Package output prints API responses. Table cells come from the server and may contain anything
-// a customer typed, so they are stripped of control characters before they reach the terminal.
+// a customer typed, so every text path strips control characters before they reach the terminal.
 package output
 
 import (
@@ -7,17 +7,43 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"strings"
 	"text/tabwriter"
 )
 
-// Sanitize removes C0 and C1 control characters; tab and newline become a space.
+// stripped reports whether r must never reach a terminal: C0, DEL, C1, bidi controls and the
+// line/paragraph separators. Other format characters (ZWJ) stay, emoji and some scripts need them.
+func stripped(r rune) bool {
+	switch {
+	case r < 0x20, r >= 0x7f && r <= 0x9f:
+		return true
+	case r == 0x061c, r == 0x200e, r == 0x200f, r == 0x2028, r == 0x2029:
+		return true
+	case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+		return true
+	}
+	return false
+}
+
+// Sanitize makes s safe for one table cell: tab and newline become a space, control and bidi
+// characters are removed.
 func Sanitize(s string) string {
 	return strings.Map(func(r rune) rune {
 		switch {
 		case r == '\t' || r == '\n':
 			return ' '
-		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
+		case stripped(r):
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// sanitizeText is Sanitize for multi-line output: newline and tab survive.
+func sanitizeText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\t' && r != '\n' && stripped(r) {
 			return -1
 		}
 		return r
@@ -57,8 +83,24 @@ func rows(body []byte) ([]map[string]any, bool) {
 	return nil, false
 }
 
+// kind classifies a content type: json, text (also unparseable types) or other (binary).
+func kind(contentType string) string {
+	mt, _, err := mime.ParseMediaType(contentType)
+	switch {
+	case err != nil, strings.HasPrefix(mt, "text/"):
+		return "text"
+	case mt == "application/json", strings.HasSuffix(mt, "+json"):
+		return "json"
+	}
+	return "other"
+}
+
 func Render(w io.Writer, body []byte, contentType string, columns []string, asJSON bool) error {
-	if !strings.HasPrefix(contentType, "application/json") {
+	switch kind(contentType) {
+	case "text":
+		_, err := io.WriteString(w, sanitizeText(string(body)))
+		return err
+	case "other":
 		_, err := w.Write(body)
 		return err
 	}
@@ -84,9 +126,9 @@ func Render(w io.Writer, body []byte, contentType string, columns []string, asJS
 	}
 	var pretty bytes.Buffer
 	if err := json.Indent(&pretty, body, "", "  "); err != nil {
-		_, err := w.Write(body)
+		_, err := io.WriteString(w, sanitizeText(string(body)))
 		return err
 	}
-	_, err := fmt.Fprintln(w, pretty.String())
+	_, err := fmt.Fprintln(w, sanitizeText(pretty.String()))
 	return err
 }
