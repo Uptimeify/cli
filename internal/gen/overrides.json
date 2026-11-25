@@ -1,4 +1,5 @@
 {
+  "GET /api/auth/get-session": "api-auth get-session get",
   "PATCH /api/organizations/{id}": "organizations update-by-id",
   "GET /api/organizations/{id}/billing": "organizations billing get-by-id",
   "PATCH /api/organizations/{id}/billing": "organizations billing update-by-id",

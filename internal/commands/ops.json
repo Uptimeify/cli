@@ -32,7 +32,7 @@
  },
  {
   "name": [
-   "auth",
+   "api-auth",
    "get-session",
    "get"
   ],
