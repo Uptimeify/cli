@@ -31,6 +31,10 @@ Request bodies:
 - `--field key=value` sends a JSON string: `--field name=production`.
 - `--field key:=json` sends parsed JSON (numbers, booleans, objects): `--field interval:=60`.
 - `--body file.json` reads the whole body from a file, or from standard input with `--body -`.
+  The body must be valid JSON and at most 10 MB.
+
+Path arguments such as `<id>` must not contain `/` or `\`, also not in encoded form (`%2F`,
+`%5C`). The command exits with code 2 and sends nothing.
 
 Output:
 
@@ -46,20 +50,35 @@ terminal and without `--yes` they exit with code 2 and send nothing.
 | Variable | Meaning |
 | --- | --- |
 | `UPTIMEIFY_TOKEN` | API token. Required for every command that calls the API. |
-| `UPTIMEIFY_API_URL` | API base URL. Default `https://uptimeify.io`. |
+| `UPTIMEIFY_API_URL` | API base URL. Default `https://uptimeify.io`. The token is sent to this host, so anyone who can set this variable for your shell or CI job receives your token. |
 | `UPTIMEIFY_ALLOW_INSECURE_LOOPBACK` | Set to `1` to allow plain `http://127.0.0.1`. Nothing else may use http. |
 | `UPTIMEIFY_DEBUG` | Set to `1` to print method, URL and status to stderr. Headers are never printed. |
+
+## Handling the token
+
+`export UPTIMEIFY_TOKEN=...` typed on a command line lands in your shell history, and every
+program started from that shell inherits the variable. To avoid the history entry, read it
+without echo:
+
+    read -rs UPTIMEIFY_TOKEN && export UPTIMEIFY_TOKEN
+
+For CI, create a dedicated token with the smallest permissions the job needs. If a token leaked,
+revoke it in the dashboard.
 
 ## Security
 
 What is implemented today:
 
 - The token is read from the environment only. There is no token flag.
+- The token is sent only to the host in `UPTIMEIFY_API_URL` (default `https://uptimeify.io`).
+  Anyone who can set that variable for your shell or CI job receives your token. Treat it like the
+  token itself.
 - Requests use HTTPS. The one exception is `http://127.0.0.1` with
   `UPTIMEIFY_ALLOW_INSECURE_LOOPBACK=1`.
 - A redirect to another host is not followed.
 - Output printed to a terminal is sanitised.
-- Path arguments that are empty, `.` or `..` are rejected.
+- Path arguments that are empty, `.`, `..` or contain `/` or `\` (also encoded) are rejected.
+- Request bodies are limited to 10 MB.
 - No telemetry and no self-update.
 
 Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
