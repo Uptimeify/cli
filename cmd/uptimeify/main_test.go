@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -32,7 +33,10 @@ func walk(c *cobra.Command, f func(*cobra.Command)) {
 
 func testRoot() *cobra.Command {
 	no := func() bool { return false }
-	return newRoot(func(string) string { return "" }, &bytes.Buffer{}, &bytes.Buffer{}, strings.NewReader(""), no, no)
+	root := newRoot(func(string) string { return "" }, &bytes.Buffer{}, &bytes.Buffer{}, strings.NewReader(""), no, no)
+	root.InitDefaultHelpCmd()
+	root.InitDefaultCompletionCmd()
+	return root
 }
 
 func TestNoSiblingCommandsShareAName(t *testing.T) {
@@ -182,5 +186,66 @@ func TestConfigFilesInWorkingDirectoryAreIgnored(t *testing.T) {
 	out, _, err := runCLI(t, nil, "auth", "status")
 	if err != nil || !strings.Contains(out, "https://uptimeify.io") || strings.Contains(out, "evil") || !strings.Contains(out, "not set") {
 		t.Errorf("out = %q, err = %v", out, err)
+	}
+}
+
+func TestUsageErrorsExitTwoWithoutRequest(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	env := map[string]string{"UPTIMEIFY_TOKEN": "wsm_x", "UPTIMEIFY_API_URL": srv.URL, "UPTIMEIFY_ALLOW_INSECURE_LOOPBACK": "1"}
+	cases := []struct {
+		args []string
+		word string
+	}{
+		{[]string{"bogus"}, "bogus"},
+		{[]string{"websites", "bogus"}, "bogus"},
+		{[]string{"im", "teams", "bogus"}, "bogus"},
+		{[]string{"websites", "list", "--nope"}, "nope"},
+		{[]string{"organization", "get", "--nope"}, "nope"},
+	}
+	for _, c := range cases {
+		_, _, err := runCLI(t, env, c.args...)
+		if exitCode(err) != clierr.Usage || err == nil || !strings.Contains(err.Error(), c.word) {
+			t.Errorf("%v: err = %v, exit %d", c.args, err, exitCode(err))
+		}
+	}
+	if hits.Load() != 0 {
+		t.Errorf("server got %d requests", hits.Load())
+	}
+}
+
+func TestBareGroupPrintsHelpAndExitsZero(t *testing.T) {
+	out, _, err := runCLI(t, nil, "websites")
+	if err != nil || !strings.Contains(out, "list") {
+		t.Errorf("out = %q, err = %v", out, err)
+	}
+	srv := apiServer(t)
+	env := map[string]string{"UPTIMEIFY_TOKEN": "wsm_x", "UPTIMEIFY_API_URL": srv.URL, "UPTIMEIFY_ALLOW_INSECURE_LOOPBACK": "1"}
+	if _, _, err := runCLI(t, env, "websites", "list"); err != nil {
+		t.Errorf("websites list: %v", err)
+	}
+}
+
+func TestPrintErrorSanitises(t *testing.T) {
+	_, _, err := runCLI(t, nil, "\x1b[31mbogus")
+	var b bytes.Buffer
+	printError(&b, err)
+	if strings.ContainsRune(b.String(), 0x1b) || strings.Count(b.String(), "\n") != 1 || !strings.HasPrefix(b.String(), "Error: ") {
+		t.Errorf("printed %q", b.String())
+	}
+}
+
+func TestAuthStatusInvalidURL(t *testing.T) {
+	out, _, err := runCLI(t, map[string]string{"UPTIMEIFY_API_URL": "http://example.com"}, "auth", "status")
+	if exitCode(err) != clierr.Usage || !strings.Contains(out, "API:   invalid (") || strings.Contains(out, "API:   http") {
+		t.Errorf("out = %q, err = %v", out, err)
+	}
+	out, _, err = runCLI(t, nil, "auth", "status")
+	if err != nil || !strings.Contains(out, "API:   https://uptimeify.io") {
+		t.Errorf("valid: out = %q, err = %v", out, err)
 	}
 }

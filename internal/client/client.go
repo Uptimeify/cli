@@ -98,25 +98,40 @@ type Client struct {
 
 var errCrossHost = errors.New("the server redirected to another host, refusing to follow")
 
-func New(o Options) (*Client, error) {
-	if o.Token == "" {
-		return nil, clierr.New(clierr.Auth, "not signed in: set UPTIMEIFY_TOKEN")
-	}
-	u, err := url.Parse(o.BaseURL)
+// CheckBaseURL validates the API base URL. Its errors never contain the supplied value, since it
+// may be a pasted secret.
+func CheckBaseURL(raw string, allowInsecureLoopback bool) error {
+	_, err := parseBase(raw, allowInsecureLoopback)
+	return err
+}
+
+func parseBase(raw string, allowInsecureLoopback bool) (*url.URL, error) {
+	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
-		return nil, clierr.New(clierr.Usage, "invalid API URL %q", o.BaseURL)
+		return nil, clierr.New(clierr.Usage, "the API URL is not a valid URL")
 	}
 	if u.User != nil {
 		return nil, clierr.New(clierr.Usage, "the API URL must not contain credentials")
 	}
 	switch {
 	case u.Scheme == "https":
-	case u.Scheme == "http" && u.Hostname() == "127.0.0.1" && o.AllowInsecureLoopback:
+	case u.Scheme == "http" && u.Hostname() == "127.0.0.1" && allowInsecureLoopback:
 	default:
-		return nil, clierr.New(clierr.Usage, "the API URL must use https (got %q)", o.BaseURL)
+		return nil, clierr.New(clierr.Usage, "the API URL must use https (got scheme %q)", u.Scheme)
 	}
 	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
 		return nil, clierr.New(clierr.Usage, "the API URL must not contain a path, query or fragment")
+	}
+	return u, nil
+}
+
+func New(o Options) (*Client, error) {
+	if o.Token == "" {
+		return nil, clierr.New(clierr.Auth, "not signed in: set UPTIMEIFY_TOKEN")
+	}
+	u, err := parseBase(o.BaseURL, o.AllowInsecureLoopback)
+	if err != nil {
+		return nil, err
 	}
 	u.Path = ""
 	sleep := func(ctx context.Context, d time.Duration) error {
@@ -221,7 +236,10 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 			continue
 		}
 		if res.StatusCode >= 400 {
-			ae := &APIError{Status: res.StatusCode, Body: raw}
+			// A server could echo the bearer token back; it must not reach the terminal.
+			tok := []byte(c.token)
+			redact := func(s string) string { return strings.ReplaceAll(s, c.token, "[redacted]") }
+			ae := &APIError{Status: res.StatusCode, Body: bytes.ReplaceAll(raw, tok, []byte("[redacted]"))}
 			var parsed struct {
 				Message string `json:"message"`
 				Data    struct {
@@ -229,7 +247,7 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 				} `json:"data"`
 			}
 			if json.Unmarshal(raw, &parsed) == nil {
-				ae.Message, ae.Code = clean(parsed.Message), clean(parsed.Data.Code)
+				ae.Message, ae.Code = redact(clean(parsed.Message)), redact(clean(parsed.Data.Code))
 			}
 			return nil, ae
 		}

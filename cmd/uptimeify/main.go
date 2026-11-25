@@ -12,6 +12,7 @@ import (
 	"github.com/uptimeify/cli/internal/client"
 	"github.com/uptimeify/cli/internal/clierr"
 	"github.com/uptimeify/cli/internal/commands"
+	"github.com/uptimeify/cli/internal/output"
 )
 
 // version is set by the release build: -ldflags "-X main.version=1.2.3".
@@ -37,6 +38,7 @@ func newRoot(env func(string) string, out, errOut io.Writer, in io.Reader, stdin
 	}
 	root.SetOut(out)
 	root.SetErr(errOut)
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return clierr.New(clierr.Usage, "%v", err) })
 	root.PersistentFlags().Bool("json", false, "print the raw JSON response")
 
 	newClient := func() (commands.Doer, error) {
@@ -67,12 +69,18 @@ func newRoot(env func(string) string, out, errOut io.Writer, in io.Reader, stdin
 		Short: "Show where requests go and whether a token is configured",
 		Args:  cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
+			allowLoop := env("UPTIMEIFY_ALLOW_INSECURE_LOOPBACK") == "1"
+			urlErr := client.CheckBaseURL(apiURL(env), allowLoop)
+			apiLine := apiURL(env)
+			if urlErr != nil {
+				apiLine = "invalid (" + urlErr.Error() + ")"
+			}
 			state := "not set"
 			if env("UPTIMEIFY_TOKEN") != "" {
 				state = "set (from UPTIMEIFY_TOKEN)"
 			}
-			fmt.Fprintf(out, "API:   %s\nToken: %s\n", apiURL(env), state)
-			return nil
+			fmt.Fprintf(out, "API:   %s\nToken: %s\n", apiLine, state)
+			return urlErr
 		},
 	})
 	root.AddCommand(auth)
@@ -94,7 +102,28 @@ func newRoot(env func(string) string, out, errOut io.Writer, in io.Reader, stdin
 			return nil
 		},
 	})
+	root.InitDefaultHelpCmd()
+	root.InitDefaultCompletionCmd()
+	requireKnownSubcommands(root)
 	return root
+}
+
+// requireKnownSubcommands makes every pure group (subcommands, no action of its own) print help
+// when bare and reject any extra word as a usage error. Cobra would otherwise print help and exit 0.
+func requireKnownSubcommands(c *cobra.Command) {
+	for _, s := range c.Commands() {
+		requireKnownSubcommands(s)
+	}
+	if len(c.Commands()) == 0 || c.Runnable() {
+		return
+	}
+	c.Args = func(c *cobra.Command, args []string) error {
+		if len(args) > 0 {
+			return clierr.New(clierr.Usage, "unknown command %q for %q", args[0], c.CommandPath())
+		}
+		return nil
+	}
+	c.RunE = func(c *cobra.Command, _ []string) error { return c.Help() }
 }
 
 func exitCode(err error) int {
@@ -105,12 +134,17 @@ func exitCode(err error) int {
 	return clierr.ExitCode(err)
 }
 
+// printError writes err as one sanitised line, so control characters cannot act on the terminal.
+func printError(w io.Writer, err error) {
+	if err != nil {
+		fmt.Fprintln(w, "Error:", output.Sanitize(err.Error()))
+	}
+}
+
 func main() {
 	stdinTTY := func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
 	stdoutTTY := func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
 	err := newRoot(os.Getenv, os.Stdout, os.Stderr, os.Stdin, stdinTTY, stdoutTTY).Execute()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-	}
+	printError(os.Stderr, err)
 	os.Exit(exitCode(err))
 }

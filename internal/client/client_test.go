@@ -299,3 +299,51 @@ func TestDoKeepsEscapedPathSegments(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestNewErrorsDoNotEchoURL(t *testing.T) {
+	for _, u := range []string{"http://%zz-SECRETVALUE", "http://example.com/SECRETVALUE?k=SECRETVALUE"} {
+		_, err := New(Options{BaseURL: u, Token: "t"})
+		if err == nil || strings.Contains(err.Error(), "SECRETVALUE") {
+			t.Errorf("New(%q) error = %v", u, err)
+		}
+	}
+}
+
+func TestCheckBaseURL(t *testing.T) {
+	if CheckBaseURL("https://uptimeify.io", false) != nil || CheckBaseURL("http://127.0.0.1:1", true) != nil {
+		t.Error("valid URL rejected")
+	}
+	if CheckBaseURL("http://127.0.0.1:1", false) == nil || CheckBaseURL("http://example.com", true) == nil {
+		t.Error("invalid URL accepted")
+	}
+}
+
+func TestReflectedTokenIsRedacted(t *testing.T) {
+	c, _ := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		w.Write([]byte(`{"message":"bad token wsm_secret here","data":{"code":"x wsm_secret"}}`))
+	}, nil)
+	_, err := c.Do(context.Background(), "GET", "/api/websites", nil, nil)
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("err = %v", err)
+	}
+	for _, s := range []string{err.Error(), ae.Message, ae.Code, string(ae.Body)} {
+		if strings.Contains(s, "wsm_secret") {
+			t.Errorf("token leaked in %q", s)
+		}
+	}
+	if !strings.Contains(ae.Message, "[redacted]") {
+		t.Errorf("message = %q", ae.Message)
+	}
+}
+
+func TestSuccessBodyNotAltered(t *testing.T) {
+	c, _ := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"note":"wsm_secret"}`))
+	}, nil)
+	res, err := c.Do(context.Background(), "GET", "/api/websites", nil, nil)
+	if err != nil || string(res.Body) != `{"note":"wsm_secret"}` {
+		t.Errorf("res = %+v, err = %v", res, err)
+	}
+}
