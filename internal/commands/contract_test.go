@@ -66,7 +66,7 @@ func opArgs(op gen.Op, params []string, yes bool) []string {
 	if op.HasBody {
 		args = append(args, "--field", "a=1")
 	}
-	if yes && op.Method == "DELETE" {
+	if yes && op.Confirm {
 		args = append(args, "--yes")
 	}
 	return args
@@ -130,14 +130,14 @@ func TestContractEveryOperationHasExactlyOneCommand(t *testing.T) {
 	}
 }
 
-func TestContractDeleteWithoutYesSendsNothing(t *testing.T) {
+func TestContractConfirmWithoutYesSendsNothing(t *testing.T) {
 	ops, err := Ops()
 	if err != nil {
 		t.Fatal(err)
 	}
 	n := 0
 	for _, op := range ops {
-		if op.Method != "DELETE" {
+		if !op.Confirm {
 			continue
 		}
 		n++
@@ -148,7 +148,36 @@ func TestContractDeleteWithoutYesSendsNothing(t *testing.T) {
 		}
 	}
 	if n == 0 {
-		t.Fatal("no DELETE commands in the manifest")
+		t.Fatal("no commands with Confirm in the manifest")
+	}
+}
+
+func TestContractConfirmCoversDeleteAndNamedOps(t *testing.T) {
+	ops, err := Ops()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]gen.Op{}
+	for _, op := range ops {
+		byKey[op.Method+" "+op.Path] = op
+		if op.Method == "DELETE" && !op.Confirm {
+			t.Errorf("%v: DELETE without Confirm", op.Name)
+		}
+	}
+	for _, k := range []string{
+		"POST /api/customers/bulk",
+		"POST /api/im/incidents/bulk",
+		"POST /api/im/incidents/{id}/merge",
+		"POST /api/im/sources/{id}/disable-auth",
+		"POST /api/im/sources/{id}/rotate-bearer-token",
+		"POST /api/im/sources/{id}/rotate-token",
+		"POST /api/status-pages/maintenances/{id}/cancel",
+		"POST /api/users/{id}/mfa/reset",
+		"POST /api/websites/{id}/heartbeat-token/rotate",
+	} {
+		if op, ok := byKey[k]; !ok || !op.Confirm {
+			t.Errorf("%s: found = %v, Confirm = %v", k, ok, op.Confirm)
+		}
 	}
 }
 

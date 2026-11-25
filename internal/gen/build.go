@@ -119,7 +119,9 @@ func columns(schema json.RawMessage) []string {
 
 // Build turns the OpenAPI document into the manifest, sorted by command name. overrides maps
 // "METHOD /api/path" to a full command name; a name collision without override is an error.
-func Build(spec []byte, overrides map[string]string) ([]Op, error) {
+// confirm lists "METHOD /api/path" of non-DELETE operations that need confirmation; an entry that
+// matches no operation is an error.
+func Build(spec []byte, overrides map[string]string, confirm []string) ([]Op, error) {
 	var doc struct {
 		Paths map[string]map[string]json.RawMessage `json:"paths"`
 	}
@@ -127,6 +129,10 @@ func Build(spec []byte, overrides map[string]string) ([]Op, error) {
 		return nil, fmt.Errorf("parse spec: %w", err)
 	}
 	var ops []Op
+	wantConfirm := map[string]bool{}
+	for _, c := range confirm {
+		wantConfirm[c] = false
+	}
 	seen := map[string]string{}
 	paths := make([]string, 0, len(doc.Paths))
 	for p := range doc.Paths {
@@ -164,6 +170,10 @@ func Build(spec []byte, overrides map[string]string) ([]Op, error) {
 			}
 			seen[joined] = key
 			op := Op{Name: name, Method: strings.ToUpper(method), Path: path, ID: ro.OperationID, Summary: ro.Summary, PathParams: PathParams(path)}
+			if _, listed := wantConfirm[key]; listed {
+				wantConfirm[key] = true
+			}
+			op.Confirm = method == "delete" || wantConfirm[key]
 			flags := map[string]string{}
 			for _, p := range ro.Parameters {
 				if p.In != "query" {
@@ -193,6 +203,16 @@ func Build(spec []byte, overrides map[string]string) ([]Op, error) {
 			}
 			ops = append(ops, op)
 		}
+	}
+	var stale []string
+	for k, used := range wantConfirm {
+		if !used {
+			stale = append(stale, k)
+		}
+	}
+	if len(stale) > 0 {
+		sort.Strings(stale)
+		return nil, fmt.Errorf("confirm.json lists operations that are not in the spec: %s", strings.Join(stale, ", "))
 	}
 	sort.Slice(ops, func(i, j int) bool {
 		return strings.Join(ops[i].Name, " ") < strings.Join(ops[j].Name, " ")
@@ -254,6 +274,9 @@ func Breaking(old, cur []Op) []string {
 		}
 		if len(o.PathParams) != len(c.PathParams) {
 			out = append(out, fmt.Sprintf("uptimeify %s: path parameters changed (%d -> %d)", n, len(o.PathParams), len(c.PathParams)))
+		}
+		if o.Confirm && !c.Confirm {
+			out = append(out, fmt.Sprintf("uptimeify %s: no longer asks for confirmation", n))
 		}
 		have := map[string]bool{}
 		for _, q := range c.Query {

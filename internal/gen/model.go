@@ -21,4 +21,6 @@ type Op struct {
 	HasBody      bool     `json:"hasBody,omitempty"`
 	BodyRequired bool     `json:"bodyRequired,omitempty"`
 	Columns      []string `json:"columns,omitempty"`
+	// Confirm asks before sending: every DELETE, plus the operations named in confirm.json.
+	Confirm bool `json:"confirm,omitempty"`
 }

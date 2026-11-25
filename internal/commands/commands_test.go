@@ -38,7 +38,8 @@ var testOps = []gen.Op{
 	{Name: []string{"websites", "list"}, Method: "GET", Path: "/api/websites", Columns: []string{"id"},
 		Query: []gen.Param{{Name: "customerId", Type: "string"}, {Name: "search", Type: "string"}}},
 	{Name: []string{"websites", "create"}, Method: "POST", Path: "/api/websites", HasBody: true, BodyRequired: true},
-	{Name: []string{"im", "teams", "members", "delete"}, Method: "DELETE", Path: "/api/im/teams/{id}/members/{memberId}", PathParams: []string{"id", "memberId"}},
+	{Name: []string{"im", "teams", "members", "delete"}, Method: "DELETE", Path: "/api/im/teams/{id}/members/{memberId}", PathParams: []string{"id", "memberId"}, Confirm: true},
+	{Name: []string{"users", "mfa", "reset"}, Method: "POST", Path: "/api/users/{id}/mfa/reset", PathParams: []string{"id"}, Confirm: true},
 }
 
 func run(t *testing.T, f *fake, tty bool, stdin string, args ...string) (string, error) {
@@ -157,6 +158,20 @@ func TestDeleteAsksAndAbortsWithoutTTY(t *testing.T) {
 		t.Errorf("answer y: err = %v, calls = %d", err, len(f.calls))
 	}
 	if !strings.Contains(errOut, "Delete ") || strings.Contains(out, "Delete ") {
+		t.Errorf("prompt must be on Err only: out = %q, err = %q", out, errOut)
+	}
+}
+
+func TestConfirmedNonDeleteAsksFirst(t *testing.T) {
+	f := &fake{}
+	if _, err := run(t, f, true, "n\n", "users", "mfa", "reset", "5"); err == nil || len(f.calls) != 0 {
+		t.Errorf("answer n: err = %v, calls = %d", err, len(f.calls))
+	}
+	out, errOut, err := runIO(t, f, true, false, "y\n", "users", "mfa", "reset", "5")
+	if err != nil || len(f.calls) != 1 {
+		t.Fatalf("answer y: err = %v, calls = %d", err, len(f.calls))
+	}
+	if !strings.Contains(errOut, "Run users mfa reset on /api/users/5/mfa/reset? This cannot be undone. [y/N] ") || strings.Contains(out, "Run ") {
 		t.Errorf("prompt must be on Err only: out = %q, err = %q", out, errOut)
 	}
 }

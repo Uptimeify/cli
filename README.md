@@ -42,8 +42,10 @@ Output:
 - A binary response (for example a PDF report) is refused on a terminal. Redirect it to a file:
   `uptimeify <command> > report.pdf`.
 
-Delete commands ask for confirmation on stderr, but only when stdin is a terminal. Without a
-terminal and without `--yes` they exit with code 2 and send nothing.
+Delete commands and a named set of other irreversible operations (rotating tokens, MFA reset,
+bulk actions, merging incidents, cancelling a maintenance) ask for confirmation on stderr, but
+only when stdin is a terminal. Without a terminal, scripts must pass `--yes`; without it the
+command exits with code 2 and sends nothing.
 
 ## Environment variables
 

@@ -88,20 +88,28 @@ func requestBody(c *cobra.Command, op gen.Op, in io.Reader) ([]byte, error) {
 }
 
 func confirm(c *cobra.Command, op gen.Op, target string, d Deps) error {
-	if op.Method != "DELETE" {
+	if !op.Confirm {
 		return nil
 	}
 	if yes, _ := c.Flags().GetBool("yes"); yes {
 		return nil
 	}
+	verb := "run " + strings.Join(op.Name, " ")
+	if op.Method == "DELETE" {
+		verb = "delete"
+	}
 	if d.IsTTY == nil || !d.IsTTY() {
-		return clierr.New(clierr.Usage, "refusing to delete without confirmation: pass --yes")
+		return clierr.New(clierr.Usage, "refusing to %s without confirmation: pass --yes", verb)
 	}
 	prompt := d.Err
 	if prompt == nil {
 		prompt = d.Out
 	}
-	fmt.Fprintf(prompt, "Delete %s? This cannot be undone. [y/N] ", target)
+	if op.Method == "DELETE" {
+		fmt.Fprintf(prompt, "Delete %s? This cannot be undone. [y/N] ", target)
+	} else {
+		fmt.Fprintf(prompt, "Run %s on %s? This cannot be undone. [y/N] ", strings.Join(op.Name, " "), target)
+	}
 	answer, _ := bufio.NewReader(d.In).ReadString('\n')
 	if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
 		return clierr.New(clierr.General, "aborted")

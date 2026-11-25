@@ -17,7 +17,7 @@ func mini(t *testing.T) []byte {
 }
 
 func TestBuild(t *testing.T) {
-	ops, err := Build(mini(t), nil)
+	ops, err := Build(mini(t), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,11 +48,11 @@ func TestBuildCollisionFails(t *testing.T) {
 	spec := []byte(`{"paths":{
 	  "/api/organizations":{"patch":{"operationId":"a","responses":{}}},
 	  "/api/organizations/{id}":{"patch":{"operationId":"b","responses":{}}}}}`)
-	_, err := Build(spec, nil)
+	_, err := Build(spec, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "organizations update") {
 		t.Fatalf("want collision error, got %v", err)
 	}
-	ops, err := Build(spec, map[string]string{"PATCH /api/organizations": "organizations update-current"})
+	ops, err := Build(spec, map[string]string{"PATCH /api/organizations": "organizations update-current"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,23 +77,23 @@ func TestBuildRejectsReservedAndAmbiguousNames(t *testing.T) {
 		"unsupported method": {`{"paths":{"/api/x":{"head":{"operationId":"a","responses":{}}}}}`, "HEAD /api/x"},
 	}
 	for name, c := range cases {
-		_, err := Build([]byte(c.spec), nil)
+		_, err := Build([]byte(c.spec), nil, nil)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err = %v, want mention of %q", name, err, c.want)
 		}
 	}
 	for _, name := range []string{"auth", "doctor", "help", "completion", "version", "config"} {
 		spec := []byte(`{"paths":{"/api/` + name + `":{"get":{"operationId":"a","responses":{}}}}}`)
-		if _, err := Build(spec, nil); err == nil || !strings.Contains(err.Error(), "overrides.json") {
+		if _, err := Build(spec, nil, nil); err == nil || !strings.Contains(err.Error(), "overrides.json") {
 			t.Errorf("%s: err = %v", name, err)
 		}
-		if _, err := Build(spec, map[string]string{"GET /api/" + name: "x-" + name + " get"}); err != nil {
+		if _, err := Build(spec, map[string]string{"GET /api/" + name: "x-" + name + " get"}, nil); err != nil {
 			t.Errorf("%s with override: %v", name, err)
 		}
 	}
 	for _, f := range []string{"json", "body", "field", "yes", "help"} {
 		spec := []byte(`{"paths":{"/api/x":{"get":{"operationId":"a","parameters":[{"name":"` + f + `","in":"query"}],"responses":{}}}}}`)
-		if _, err := Build(spec, nil); err == nil || !strings.Contains(err.Error(), "--"+f) {
+		if _, err := Build(spec, nil, nil); err == nil || !strings.Contains(err.Error(), "--"+f) {
 			t.Errorf("flag %s: err = %v", f, err)
 		}
 	}
@@ -138,4 +138,43 @@ func TestDeriveNamePanicsOnUnknownMethod(t *testing.T) {
 		}
 	}()
 	DeriveName("trace", "/api/x", false)
+}
+
+func TestBuildConfirm(t *testing.T) {
+	spec := []byte(`{"paths":{
+	  "/api/things/{id}":{"get":{"operationId":"g","responses":{}},"delete":{"operationId":"d","responses":{}}},
+	  "/api/things/{id}/rotate":{"post":{"operationId":"r","responses":{}}},
+	  "/api/things/{id}/touch":{"post":{"operationId":"t","responses":{}}}}}`)
+	ops, err := Build(spec, nil, []string{"POST /api/things/{id}/rotate"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, op := range ops {
+		got[op.Method+" "+op.Path] = op.Confirm
+	}
+	want := map[string]bool{"GET /api/things/{id}": false, "DELETE /api/things/{id}": true, "POST /api/things/{id}/rotate": true, "POST /api/things/{id}/touch": false}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("confirm = %v, want %v", got, want)
+	}
+}
+
+func TestBuildStaleConfirmEntryFails(t *testing.T) {
+	spec := []byte(`{"paths":{"/api/x":{"get":{"operationId":"a","responses":{}}}}}`)
+	_, err := Build(spec, nil, []string{"POST /api/gone"})
+	if err == nil || !strings.Contains(err.Error(), "POST /api/gone") {
+		t.Fatalf("want error naming the entry, got %v", err)
+	}
+}
+
+func TestBreakingLostConfirm(t *testing.T) {
+	old := []Op{{Name: []string{"a", "rotate"}, Method: "POST", Path: "/api/a", Confirm: true}}
+	cur := []Op{{Name: []string{"a", "rotate"}, Method: "POST", Path: "/api/a"}}
+	want := "uptimeify a rotate: no longer asks for confirmation"
+	if got := Breaking(old, cur); len(got) != 1 || got[0] != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got := Breaking(cur, old); len(got) != 0 {
+		t.Errorf("gained confirm reported: %q", got)
+	}
 }

@@ -119,7 +119,8 @@
   "summary": "Delete Custom Field",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -209,7 +210,8 @@
   "summary": "Delete Customer Token",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -251,7 +253,8 @@
   "summary": "Delete Customer Domain",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -366,7 +369,8 @@
   "summary": "Delete Customer IP",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -477,7 +481,8 @@
   "id": "postApiCustomersBulk",
   "summary": "Bulk Actions",
   "hasBody": true,
-  "bodyRequired": true
+  "bodyRequired": true,
+  "confirm": true
  },
  {
   "name": [
@@ -513,7 +518,8 @@
      "delete"
     ]
    }
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -972,7 +978,8 @@
   "summary": "Delete DNS Monitor",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -1449,7 +1456,8 @@
   "summary": "Delete FTP Monitor",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -1888,7 +1896,8 @@
   "summary": "Delete ICMP Monitor",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -2375,7 +2384,8 @@
   "summary": "DELETE /api/im/channels/{id}",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -2518,7 +2528,8 @@
   "id": "postApiImIncidentsBulk",
   "summary": "POST /api/im/incidents/bulk",
   "hasBody": true,
-  "bodyRequired": true
+  "bodyRequired": true,
+  "confirm": true
  },
  {
   "name": [
@@ -2776,7 +2787,8 @@
    "id"
   ],
   "hasBody": true,
-  "bodyRequired": true
+  "bodyRequired": true,
+  "confirm": true
  },
  {
   "name": [
@@ -3104,7 +3116,8 @@
   "summary": "DELETE /api/im/notification-settings/rules/{id}",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -3277,7 +3290,8 @@
   "summary": "DELETE /api/im/outbound/{id}",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -3411,7 +3425,8 @@
   "pathParams": [
    "id",
    "actionId"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -3696,7 +3711,8 @@
   "pathParams": [
    "id",
    "incidentId"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -3972,7 +3988,8 @@
   "summary": "DELETE /api/im/routing/{id}",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -4058,7 +4075,8 @@
   "summary": "DELETE /api/im/schedules/{id}",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -4136,7 +4154,8 @@
   "pathParams": [
    "id",
    "overrideId"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -4264,7 +4283,8 @@
   "summary": "DELETE /api/im/services/{id}",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -4407,7 +4427,8 @@
   "summary": "DELETE /api/im/sources/{id}",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -4423,7 +4444,8 @@
    "id"
   ],
   "hasBody": true,
-  "bodyRequired": true
+  "bodyRequired": true,
+  "confirm": true
  },
  {
   "name": [
@@ -4533,7 +4555,8 @@
   "summary": "POST /api/im/sources/{id}/rotate-bearer-token",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -4547,7 +4570,8 @@
   "summary": "POST /api/im/sources/{id}/rotate-token",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -4663,7 +4687,8 @@
   "summary": "DELETE /api/im/statuspage-rules/{id}",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -4737,7 +4762,8 @@
   "summary": "DELETE /api/im/statuspage-rules/override/{statusPageId}",
   "pathParams": [
    "statusPageId"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -4859,7 +4885,8 @@
   "summary": "DELETE /api/im/teams/{id}",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -5017,7 +5044,8 @@
   "pathParams": [
    "id",
    "memberId"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -5113,7 +5141,8 @@
   "pathParams": [
    "id",
    "overrideId"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -5215,7 +5244,8 @@
   "pathParams": [
    "id",
    "tierId"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -5516,7 +5546,8 @@
   "summary": "Delete IMAP/POP Monitor",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -5814,7 +5845,8 @@
   "summary": "DELETE /api/incidents/{id}",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -5930,7 +5962,8 @@
   "summary": "DELETE /api/incidents/{id}/postmortem/publish",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -6028,7 +6061,8 @@
   "summary": "Delete Maintenance Window",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -6239,7 +6273,8 @@
   "id": "deleteApiMonitorTags",
   "summary": "DELETE /api/monitor-tags",
   "hasBody": true,
-  "bodyRequired": true
+  "bodyRequired": true,
+  "confirm": true
  },
  {
   "name": [
@@ -6332,7 +6367,8 @@
   "summary": "Delete Notification Channel",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -6430,7 +6466,8 @@
   "summary": "DELETE /api/oauth/connections/{clientId}",
   "pathParams": [
    "clientId"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -6745,7 +6782,8 @@
   "summary": "DELETE /api/organization/reports/{id}",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -6821,7 +6859,8 @@
   "method": "DELETE",
   "path": "/api/organization/sender-domain",
   "id": "deleteApiOrganizationSenderDomain",
-  "summary": "DELETE /api/organization/sender-domain"
+  "summary": "DELETE /api/organization/sender-domain",
+  "confirm": true
  },
  {
   "name": [
@@ -6947,7 +6986,8 @@
   "summary": "Delete Organization Token",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -7003,7 +7043,8 @@
   "summary": "Delete Branding Asset",
   "pathParams": [
    "kind"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -7086,7 +7127,8 @@
   "summary": "Delete Domain",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -7284,7 +7326,8 @@
   "summary": "Delete Package Config",
   "pathParams": [
    "packageType"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -7299,7 +7342,8 @@
   "pathParams": [
    "id",
    "packageType"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -7381,7 +7425,8 @@
   "summary": "Cancel Scheduled Quota Change",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -7455,7 +7500,8 @@
   "summary": "Delete Package Config (Self)",
   "pathParams": [
    "packageType"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -7762,7 +7808,8 @@
   "summary": "Delete SMTP Monitor",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -8191,7 +8238,8 @@
   "summary": "Delete SSH Monitor",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -8498,7 +8546,8 @@
   "pathParams": [
    "id",
    "componentId"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -8581,7 +8630,8 @@
   "summary": "Delete Status Page",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -8651,7 +8701,8 @@
   "summary": "Remove Custom Domain from Status Page",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -8737,7 +8788,8 @@
   "pathParams": [
    "id",
    "groupId"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -8812,7 +8864,8 @@
   "summary": "POST /api/status-pages/maintenances/{id}/cancel",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -8853,7 +8906,8 @@
   "summary": "DELETE /api/status-pages/maintenances/{id}",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -9080,7 +9134,8 @@
   "pathParams": [
    "id",
    "subscriberId"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -9256,7 +9311,8 @@
   "summary": "DELETE /api/status-pages/templates/{id}",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -9357,7 +9413,8 @@
   "summary": "DELETE /api/tags/{id}",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -9573,7 +9630,8 @@
   "summary": "DELETE /api/tcp-monitors/{id}",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -9859,7 +9917,8 @@
   "summary": "Delete User",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -9919,7 +9978,8 @@
   "summary": "Reset User MFA",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -10134,7 +10194,8 @@
   "summary": "Delete Website",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
@@ -10220,7 +10281,8 @@
   "summary": "POST /api/websites/{id}/heartbeat-token/rotate",
   "pathParams": [
    "id"
-  ]
+  ],
+  "confirm": true
  },
  {
   "name": [
