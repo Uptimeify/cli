@@ -1,0 +1,31 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: scripts/check-commit-messages.sh origin/main
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      # - name: generated manifest is up to date
+      #   run: |
+      #     make generate
+      #     git diff --exit-code internal/commands/ops.json
+      # - name: no command was removed
+      #   if: github.event_name == 'pull_request'
+      #   run: |
+      #     git show origin/main:internal/commands/ops.json > /tmp/old-ops.json 2>/dev/null || exit 0
+      #     go run ./internal/gen/cmd -check-breaking /tmp/old-ops.json internal/commands/ops.json
