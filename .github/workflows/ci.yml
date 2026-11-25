@@ -20,12 +20,12 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-      # - name: generated manifest is up to date
-      #   run: |
-      #     make generate
-      #     git diff --exit-code internal/commands/ops.json
-      # - name: no command was removed
-      #   if: github.event_name == 'pull_request'
-      #   run: |
-      #     git show origin/main:internal/commands/ops.json > /tmp/old-ops.json 2>/dev/null || exit 0
-      #     go run ./internal/gen/cmd -check-breaking /tmp/old-ops.json internal/commands/ops.json
+      - name: generated manifest is up to date
+        run: |
+          make generate
+          git diff --exit-code internal/commands/ops.json
+      - name: no command was removed
+        if: github.event_name == 'pull_request'
+        run: |
+          git show origin/main:internal/commands/ops.json > "$RUNNER_TEMP/old-ops.json" 2>/dev/null || exit 0
+          go run ./internal/gen/cmd -check-breaking "$RUNNER_TEMP/old-ops.json" internal/commands/ops.json

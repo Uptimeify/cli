@@ -1,0 +1,25 @@
+{
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/websites": {
+      "get": {
+        "operationId": "getApiWebsites",
+        "summary": "List Websites",
+        "parameters": [
+          {"name": "search", "in": "query", "required": false, "description": "Matches name and URL.", "schema": {"type": "string"}},
+          {"name": "excludeMonitoringType", "in": "query", "schema": {"type": "string", "enum": ["http_status", "dns"]}}
+        ],
+        "responses": {"200": {"content": {"application/json": {"schema": {"type": "object", "properties": {
+          "items": {"type": "array", "items": {"type": "object", "properties": {
+            "id": {"type": "integer"}, "name": {"type": "string"}, "tags": {"type": "array"}, "paused": {"type": ["boolean", "null"]}
+          }}}
+        }}}}}}
+      },
+      "post": {"operationId": "postApiWebsites", "requestBody": {"required": true, "content": {"application/json": {}}}, "responses": {}}
+    },
+    "/api/websites/{id}": {
+      "get": {"operationId": "getApiWebsitesId", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {}},
+      "delete": {"operationId": "deleteApiWebsitesId", "responses": {}}
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "PATCH /api/organizations/{id}": "organizations update-by-id",
+  "GET /api/organizations/{id}/billing": "organizations billing get-by-id",
+  "PATCH /api/organizations/{id}/billing": "organizations billing update-by-id",
+  "PATCH /api/organizations/{id}/package-configs/{packageType}": "organizations package-configs update-by-id",
+  "DELETE /api/organizations/{id}/package-configs/{packageType}": "organizations package-configs delete-by-id",
+  "PATCH /api/package-configs/{packageType}": "package-configs update-by-id",
+  "GET /api/status-pages/{id}/subscribers/export": "status-pages subscribers export get-by-id"
+}
