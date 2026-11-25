@@ -16,10 +16,23 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
-      - run: scripts/check-commit-messages.sh origin/main
+          check-latest: true
+      - name: commit messages
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = "push" ]; then
+            case "$BEFORE" in
+              "" | 0000000000000000000000000000000000000000) scripts/check-commit-messages.sh --all ;;
+              *) scripts/check-commit-messages.sh "$BEFORE" ;;
+            esac
+          else
+            scripts/check-commit-messages.sh origin/main
+          fi
       - run: go vet ./...
-      - run: go test ./...
-      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - run: go test -race ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
       - name: generated manifest is up to date
         run: |
           make generate
