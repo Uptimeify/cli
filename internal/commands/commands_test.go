@@ -89,13 +89,48 @@ func TestListSendsOnlySetFlags(t *testing.T) {
 	}
 }
 
+func TestPathArgumentsWithSlashesAreRejected(t *testing.T) {
+	for _, bad := range []string{"a/b", "a/../../websites/7", `a\b`, "a%2Fb", "a%2fb", "a%5Cb", "a%5cb"} {
+		f := &fake{}
+		_, err := run(t, f, true, "", "im", "teams", "members", "delete", bad, "9", "--yes")
+		if clierr.ExitCode(err) != clierr.Usage || len(f.calls) != 0 {
+			t.Errorf("%q: err = %v, calls = %d", bad, err, len(f.calls))
+		}
+	}
+}
+
 func TestPathParamsAreEscaped(t *testing.T) {
 	f := &fake{}
-	if _, err := run(t, f, true, "", "im", "teams", "members", "delete", "a/b", "9", "--yes"); err != nil {
+	if _, err := run(t, f, true, "", "im", "teams", "members", "delete", "a b?c#d", "9", "--yes"); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.calls[0].path; got != "/api/im/teams/a%2Fb/members/9" {
+	if got := f.calls[0].path; got != "/api/im/teams/a%20b%3Fc%23d/members/9" {
 		t.Errorf("path = %q", got)
+	}
+}
+
+func TestNoArgumentCommandSaysSo(t *testing.T) {
+	_, err := run(t, &fake{}, true, "", "websites", "list", "extra")
+	if clierr.ExitCode(err) != clierr.Usage || err == nil || err.Error() != "this command takes no arguments" {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestBodyLargerThanLimitIsUsageError(t *testing.T) {
+	old := maxRequestBody
+	maxRequestBody = 16
+	t.Cleanup(func() { maxRequestBody = old })
+	big := `{"a":"` + strings.Repeat("x", 40) + `"}`
+	file := filepath.Join(t.TempDir(), "b.json")
+	if err := os.WriteFile(file, []byte(big), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, args := range map[string][]string{"file": {"--body", file}, "stdin": {"--body", "-"}} {
+		f := &fake{}
+		_, err := run(t, f, true, big, append([]string{"websites", "create"}, args...)...)
+		if clierr.ExitCode(err) != clierr.Usage || len(f.calls) != 0 || !strings.Contains(err.Error(), "larger than 10 MB") {
+			t.Errorf("%s: err = %v, calls = %d", name, err, len(f.calls))
+		}
 	}
 }
 

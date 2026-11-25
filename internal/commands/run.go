@@ -15,7 +15,22 @@ import (
 	"github.com/uptimeify/cli/internal/clierr"
 	"github.com/uptimeify/cli/internal/gen"
 	"github.com/uptimeify/cli/internal/output"
+	"github.com/uptimeify/cli/internal/sanitize"
 )
+
+// maxRequestBody is a variable only so tests can lower it.
+var maxRequestBody int64 = 10 << 20
+
+func readBody(r io.Reader) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(r, maxRequestBody+1))
+	if err != nil {
+		return nil, clierr.New(clierr.Usage, "read body: %v", err)
+	}
+	if int64(len(raw)) > maxRequestBody {
+		return nil, clierr.New(clierr.Usage, "the body is larger than 10 MB")
+	}
+	return raw, nil
+}
 
 func requestBody(c *cobra.Command, op gen.Op, in io.Reader) ([]byte, error) {
 	if !op.HasBody {
@@ -27,15 +42,18 @@ func requestBody(c *cobra.Command, op gen.Op, in io.Reader) ([]byte, error) {
 	case file != "" && len(fields) > 0:
 		return nil, clierr.New(clierr.Usage, "use either --body or --field, not both")
 	case file != "":
-		var raw []byte
-		var err error
-		if file == "-" {
-			raw, err = io.ReadAll(in)
-		} else {
-			raw, err = os.ReadFile(file)
+		in := in
+		if file != "-" {
+			f, err := os.Open(file)
+			if err != nil {
+				return nil, clierr.New(clierr.Usage, "read body: %v", err)
+			}
+			defer f.Close()
+			in = f
 		}
+		raw, err := readBody(in)
 		if err != nil {
-			return nil, clierr.New(clierr.Usage, "read body: %v", err)
+			return nil, err
 		}
 		if !json.Valid(raw) {
 			return nil, clierr.New(clierr.Usage, "the body is not valid JSON")
@@ -94,8 +112,9 @@ func confirm(c *cobra.Command, op gen.Op, target string, d Deps) error {
 func execute(c *cobra.Command, args []string, op gen.Op, d Deps) error {
 	path := op.Path
 	for i, p := range op.PathParams {
-		// A dot segment would climb out of the template (.../members/.. is .../teams/5 after a proxy).
-		if dec, _ := url.PathUnescape(args[i]); args[i] == "" || dec == "" || args[i] == "." || args[i] == ".." || dec == "." || dec == ".." {
+		// A dot segment would climb out of the template (.../members/.. is .../teams/5 after a proxy),
+		// and a slash or backslash, also encoded, would become another path segment once a proxy decodes it.
+		if dec, _ := url.PathUnescape(args[i]); args[i] == "" || dec == "" || args[i] == "." || args[i] == ".." || dec == "." || dec == ".." || strings.ContainsAny(args[i]+dec, `/\`) {
 			return clierr.New(clierr.Usage, "invalid value %q for <%s>", args[i], p)
 		}
 		path = strings.Replace(path, "{"+p+"}", url.PathEscape(args[i]), 1)
@@ -127,7 +146,7 @@ func execute(c *cobra.Command, args []string, op gen.Op, d Deps) error {
 	asJSON, _ := c.Flags().GetBool("json")
 	if asJSON && d.StdoutIsTTY != nil && d.StdoutIsTTY() && output.IsJSON(res.ContentType) {
 		// Valid JSON strings can still carry raw control characters; a terminal must not act on them.
-		_, err := io.WriteString(d.Out, output.SanitizeText(string(bytes.TrimRight(res.Body, "\n")))+"\n")
+		_, err := io.WriteString(d.Out, sanitize.Text(string(bytes.TrimRight(res.Body, "\n")))+"\n")
 		return err
 	}
 	return output.Render(d.Out, res.Body, res.ContentType, op.Columns, asJSON)

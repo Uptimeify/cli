@@ -72,6 +72,9 @@ func Register(root *cobra.Command, ops []gen.Op, d Deps) {
 		cmd.Short = op.Summary
 		cmd.Long = op.Summary + "\n\n" + op.Method + " " + op.Path
 		cmd.Args = func(_ *cobra.Command, args []string) error {
+			if len(op.PathParams) == 0 && len(args) > 0 {
+				return clierr.New(clierr.Usage, "this command takes no arguments")
+			}
 			if len(args) != len(op.PathParams) {
 				return clierr.New(clierr.Usage, "expected %d argument(s): %s", len(op.PathParams), strings.Join(op.PathParams, ", "))
 			}

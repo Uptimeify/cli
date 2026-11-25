@@ -290,13 +290,38 @@ func TestRetryAfterIsCapped(t *testing.T) {
 
 func TestDoKeepsEscapedPathSegments(t *testing.T) {
 	c, _ := newTest(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.EscapedPath() != "/api/x/a%2Fb" {
+		if r.URL.EscapedPath() != "/api/x/a%20b" {
 			t.Errorf("escaped path = %q", r.URL.EscapedPath())
 		}
 		w.Write([]byte(`{}`))
 	}, nil)
-	if _, err := c.Do(context.Background(), "GET", "/api/x/a%2Fb", nil, nil); err != nil {
+	if _, err := c.Do(context.Background(), "GET", "/api/x/a%20b", nil, nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDoRejectsEncodedSlashes(t *testing.T) {
+	var hits atomic.Int32
+	c, _ := newTest(t, func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }, nil)
+	for _, p := range []string{"/api/x/a%2Fb", "/api/x/a%2fb", "/api/x/a%5Cb", "/api/x/a%5cb", "/api/x/a\\b"} {
+		if _, err := c.Do(context.Background(), "GET", p, nil, nil); clierr.ExitCode(err) != clierr.Usage {
+			t.Errorf("%q: err = %v", p, err)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Errorf("%d requests reached the server", hits.Load())
+	}
+}
+
+func TestBidiControlInServerMessageIsRemoved(t *testing.T) {
+	c, _ := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		w.Write([]byte(`{"message":"ab\u202ecd","data":{"code":"x\u2066y"}}`))
+	}, nil)
+	_, err := c.Do(context.Background(), "GET", "/api/websites", nil, nil)
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.Message != "abcd" || ae.Code != "xy" || strings.ContainsAny(err.Error(), "\u202e\u2066") {
+		t.Fatalf("err = %v, ae = %+v", err, ae)
 	}
 }
 
@@ -328,7 +353,7 @@ func TestReflectedTokenIsRedacted(t *testing.T) {
 	if !errors.As(err, &ae) {
 		t.Fatalf("err = %v", err)
 	}
-	for _, s := range []string{err.Error(), ae.Message, ae.Code, string(ae.Body)} {
+	for _, s := range []string{err.Error(), ae.Message, ae.Code} {
 		if strings.Contains(s, "wsm_secret") {
 			t.Errorf("token leaked in %q", s)
 		}

@@ -12,7 +12,7 @@ import (
 	"github.com/uptimeify/cli/internal/client"
 	"github.com/uptimeify/cli/internal/clierr"
 	"github.com/uptimeify/cli/internal/commands"
-	"github.com/uptimeify/cli/internal/output"
+	"github.com/uptimeify/cli/internal/sanitize"
 )
 
 // version is set by the release build: -ldflags "-X main.version=1.2.3".
@@ -137,7 +137,7 @@ func exitCode(err error) int {
 // printError writes err as one sanitised line, so control characters cannot act on the terminal.
 func printError(w io.Writer, err error) {
 	if err != nil {
-		fmt.Fprintln(w, "Error:", output.Sanitize(err.Error()))
+		fmt.Fprintln(w, "Error:", sanitize.Line(err.Error()))
 	}
 }
 

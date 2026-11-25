@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/uptimeify/cli/internal/clierr"
+	"github.com/uptimeify/cli/internal/sanitize"
 )
 
 // maxBody is a variable only so tests can lower it.
@@ -46,7 +47,6 @@ type APIError struct {
 	Status  int
 	Code    string
 	Message string
-	Body    []byte
 }
 
 func (e *APIError) Error() string {
@@ -58,19 +58,6 @@ func (e *APIError) Error() string {
 		return fmt.Sprintf("%d %s (%s)", e.Status, msg, e.Code)
 	}
 	return fmt.Sprintf("%d %s", e.Status, msg)
-}
-
-// clean drops control characters from server text before it reaches the terminal.
-func clean(s string) string {
-	return strings.Map(func(r rune) rune {
-		switch {
-		case r == '\t' || r == '\n':
-			return ' '
-		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
-			return -1
-		}
-		return r
-	}, s)
 }
 
 func (e *APIError) ExitCode() int {
@@ -175,7 +162,7 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 	}
 	for _, seg := range strings.Split(path[1:], "/") {
 		dec, _ := url.PathUnescape(seg)
-		if seg == "" || seg == "." || seg == ".." || dec == "." || dec == ".." {
+		if seg == "" || seg == "." || seg == ".." || dec == "." || dec == ".." || strings.ContainsAny(seg+dec, `/\`) {
 			return nil, clierr.New(clierr.Usage, "invalid path %q", path)
 		}
 	}
@@ -237,9 +224,8 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 		}
 		if res.StatusCode >= 400 {
 			// A server could echo the bearer token back; it must not reach the terminal.
-			tok := []byte(c.token)
 			redact := func(s string) string { return strings.ReplaceAll(s, c.token, "[redacted]") }
-			ae := &APIError{Status: res.StatusCode, Body: bytes.ReplaceAll(raw, tok, []byte("[redacted]"))}
+			ae := &APIError{Status: res.StatusCode}
 			var parsed struct {
 				Message string `json:"message"`
 				Data    struct {
@@ -247,7 +233,7 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 				} `json:"data"`
 			}
 			if json.Unmarshal(raw, &parsed) == nil {
-				ae.Message, ae.Code = redact(clean(parsed.Message)), redact(clean(parsed.Data.Code))
+				ae.Message, ae.Code = redact(sanitize.Line(parsed.Message)), redact(sanitize.Line(parsed.Data.Code))
 			}
 			return nil, ae
 		}

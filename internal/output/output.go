@@ -10,52 +10,16 @@ import (
 	"mime"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/uptimeify/cli/internal/sanitize"
 )
-
-// stripped reports whether r must never reach a terminal: C0, DEL, C1, bidi controls and the
-// line/paragraph separators. Other format characters (ZWJ) stay, emoji and some scripts need them.
-func stripped(r rune) bool {
-	switch {
-	case r < 0x20, r >= 0x7f && r <= 0x9f:
-		return true
-	case r == 0x061c, r == 0x200e, r == 0x200f, r == 0x2028, r == 0x2029:
-		return true
-	case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
-		return true
-	}
-	return false
-}
-
-// Sanitize makes s safe for one table cell: tab and newline become a space, control and bidi
-// characters are removed.
-func Sanitize(s string) string {
-	return strings.Map(func(r rune) rune {
-		switch {
-		case r == '\t' || r == '\n':
-			return ' '
-		case stripped(r):
-			return -1
-		}
-		return r
-	}, s)
-}
-
-// SanitizeText is Sanitize for multi-line output: newline and tab survive.
-func SanitizeText(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r != '\t' && r != '\n' && stripped(r) {
-			return -1
-		}
-		return r
-	}, s)
-}
 
 func cell(v any) string {
 	switch x := v.(type) {
 	case nil:
 		return "-"
 	case string:
-		return Sanitize(x)
+		return sanitize.Line(x)
 	case json.Number:
 		return x.String()
 	case bool:
@@ -98,7 +62,7 @@ func kind(contentType string) string {
 func Render(w io.Writer, body []byte, contentType string, columns []string, asJSON bool) error {
 	switch kind(contentType) {
 	case "text":
-		_, err := io.WriteString(w, SanitizeText(string(body)))
+		_, err := io.WriteString(w, sanitize.Text(string(body)))
 		return err
 	case "other":
 		_, err := w.Write(body)
@@ -126,10 +90,10 @@ func Render(w io.Writer, body []byte, contentType string, columns []string, asJS
 	}
 	var pretty bytes.Buffer
 	if err := json.Indent(&pretty, body, "", "  "); err != nil {
-		_, err := io.WriteString(w, SanitizeText(string(body)))
+		_, err := io.WriteString(w, sanitize.Text(string(body)))
 		return err
 	}
-	_, err := fmt.Fprintln(w, SanitizeText(pretty.String()))
+	_, err := fmt.Fprintln(w, sanitize.Text(pretty.String()))
 	return err
 }
 

@@ -46,13 +46,6 @@ func TestRenderObjectAndBinary(t *testing.T) {
 	}
 }
 
-func TestSanitizeStripsControlCharacters(t *testing.T) {
-	got := Sanitize("ok\x1b[31mred\x07\u009b0m\ttab\nline")
-	if got != "ok[31mred0m tab line" {
-		t.Fatalf("Sanitize = %q", got)
-	}
-}
-
 func TestTableCellsAreSanitized(t *testing.T) {
 	var buf bytes.Buffer
 	body := []byte(`[{"name":"a\u001b]0;evil\u0007b"}]`)
@@ -113,12 +106,6 @@ func TestPDFIsRaw(t *testing.T) {
 func TestAsJSONKeepsRawBytes(t *testing.T) {
 	body := "{\"a\":\"x\u009by\"}"
 	if got := renderStr(t, body, "application/json", nil, true); got != body+"\n" {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestSanitizeBidiKeepsZWJ(t *testing.T) {
-	if got := Sanitize("a\u202eb\u2066c\u200dd"); got != "abc\u200dd" {
 		t.Fatalf("got %q", got)
 	}
 }

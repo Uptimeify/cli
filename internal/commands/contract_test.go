@@ -169,3 +169,23 @@ func TestContractDotDotPathArgumentSendsNothing(t *testing.T) {
 		}
 	}
 }
+
+func TestContractSlashPathArgumentSendsNothing(t *testing.T) {
+	ops, err := Ops()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range ops {
+		for i := range op.PathParams {
+			for _, bad := range []string{"a/../x", `a\x`, "a%2Fx", "a%5Cx"} {
+				p := placeholders(op)
+				p[i] = bad
+				f := &fake{}
+				err := runOp(ops, f, opArgs(op, p, true))
+				if clierr.ExitCode(err) != clierr.Usage || len(f.calls) != 0 {
+					t.Errorf("%v arg %d %q: err = %v, requests = %d", op.Name, i, bad, err, len(f.calls))
+				}
+			}
+		}
+	}
+}
