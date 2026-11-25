@@ -159,7 +159,12 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 		return nil, clierr.New(clierr.Usage, "invalid path %q", path)
 	}
 	target := *c.base
-	target.Path = path
+	// Path holds the decoded form and RawPath the escaped one, so a%2Fb is sent as written.
+	unescaped, err := url.PathUnescape(path)
+	if err != nil {
+		return nil, clierr.New(clierr.Usage, "invalid path %q", path)
+	}
+	target.Path, target.RawPath = unescaped, path
 	target.RawQuery = query.Encode()
 
 	for attempt := 0; ; attempt++ {

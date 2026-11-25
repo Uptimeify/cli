@@ -132,3 +132,6 @@ func Render(w io.Writer, body []byte, contentType string, columns []string, asJS
 	_, err := fmt.Fprintln(w, sanitizeText(pretty.String()))
 	return err
 }
+
+// IsBinary reports whether a response of this content type is rendered as raw bytes.
+func IsBinary(contentType string) bool { return kind(contentType) == "other" }

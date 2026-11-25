@@ -122,3 +122,15 @@ func TestSanitizeBidiKeepsZWJ(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestIsBinary(t *testing.T) {
+	for ct, want := range map[string]bool{
+		"application/pdf": true, "application/octet-stream": true, "image/png": true,
+		"application/json": false, "application/problem+json; charset=utf-8": false,
+		"text/csv; charset=utf-8": false, "text/plain": false, "": false,
+	} {
+		if got := IsBinary(ct); got != want {
+			t.Errorf("IsBinary(%q) = %v, want %v", ct, got, want)
+		}
+	}
+}

@@ -270,3 +270,15 @@ func TestRetryAfterIsCapped(t *testing.T) {
 		t.Fatalf("waits = %v", waits)
 	}
 }
+
+func TestDoKeepsEscapedPathSegments(t *testing.T) {
+	c, _ := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/api/x/a%2Fb" {
+			t.Errorf("escaped path = %q", r.URL.EscapedPath())
+		}
+		w.Write([]byte(`{}`))
+	}, nil)
+	if _, err := c.Do(context.Background(), "GET", "/api/x/a%2Fb", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+}
