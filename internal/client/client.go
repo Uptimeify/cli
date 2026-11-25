@@ -13,13 +13,16 @@ import (
 	"net/url"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/uptimeify/cli/internal/clierr"
 )
 
+// maxBody is a variable only so tests can lower it.
+var maxBody = 50 << 20
+
 const (
-	maxBody    = 50 << 20
 	maxRetries = 3
 	maxWait    = 60 * time.Second
 )
@@ -57,6 +60,19 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("%d %s", e.Status, msg)
 }
 
+// clean drops control characters from server text before it reaches the terminal.
+func clean(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t' || r == '\n':
+			return ' '
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
+			return -1
+		}
+		return r
+	}, s)
+}
+
 func (e *APIError) ExitCode() int {
 	switch e.Status {
 	case 400, 422:
@@ -77,7 +93,7 @@ type Client struct {
 	ua    string
 	hc    *http.Client
 	debug io.Writer
-	sleep func(time.Duration)
+	sleep func(context.Context, time.Duration) error
 }
 
 var errCrossHost = errors.New("the server redirected to another host, refusing to follow")
@@ -99,10 +115,22 @@ func New(o Options) (*Client, error) {
 	default:
 		return nil, clierr.New(clierr.Usage, "the API URL must use https (got %q)", o.BaseURL)
 	}
-	u.Path, u.RawQuery, u.Fragment = "", "", ""
-	sleep := o.Sleep
-	if sleep == nil {
-		sleep = time.Sleep
+	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return nil, clierr.New(clierr.Usage, "the API URL must not contain a path, query or fragment")
+	}
+	u.Path = ""
+	sleep := func(ctx context.Context, d time.Duration) error {
+		t := time.NewTimer(d)
+		defer t.Stop()
+		select {
+		case <-t.C:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if o.Sleep != nil {
+		sleep = func(_ context.Context, d time.Duration) error { o.Sleep(d); return nil }
 	}
 	c := &Client{
 		base:  u,
@@ -127,6 +155,9 @@ func New(o Options) (*Client, error) {
 }
 
 func (c *Client) Do(ctx context.Context, method, path string, query url.Values, body []byte) (*Response, error) {
+	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "?#") {
+		return nil, clierr.New(clierr.Usage, "invalid path %q", path)
+	}
 	target := *c.base
 	target.Path = path
 	target.RawQuery = query.Encode()
@@ -153,7 +184,7 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 			}
 			return nil, fmt.Errorf("request failed: %w", err)
 		}
-		raw, err := io.ReadAll(io.LimitReader(res.Body, maxBody+1))
+		raw, err := io.ReadAll(io.LimitReader(res.Body, int64(maxBody)+1))
 		res.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("read response: %w", err)
@@ -173,7 +204,9 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 			if wait > maxWait {
 				wait = maxWait
 			}
-			c.sleep(wait)
+			if err := c.sleep(ctx, wait); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		if res.StatusCode >= 400 {
@@ -185,7 +218,7 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 				} `json:"data"`
 			}
 			if json.Unmarshal(raw, &parsed) == nil {
-				ae.Message, ae.Code = parsed.Message, parsed.Data.Code
+				ae.Message, ae.Code = clean(parsed.Message), clean(parsed.Data.Code)
 			}
 			return nil, ae
 		}

@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/uptimeify/cli/internal/clierr"
 )
 
 func newTest(t *testing.T, h http.HandlerFunc, debug *bytes.Buffer) (*Client, *httptest.Server) {
@@ -27,13 +30,18 @@ func newTest(t *testing.T, h http.HandlerFunc, debug *bytes.Buffer) (*Client, *h
 }
 
 func TestNewRejectsUnsafeURLs(t *testing.T) {
-	for _, u := range []string{"http://uptimeify.io", "http://localhost:3000", "ftp://uptimeify.io", "https://user:pw@uptimeify.io", ""} {
+	for _, u := range []string{"http://uptimeify.io", "http://localhost:3000", "ftp://uptimeify.io", "https://user:pw@uptimeify.io", "", "https://uptimeify.io/prefix", "https://uptimeify.io/?x=1", "https://uptimeify.io/#f"} {
 		if _, err := New(Options{BaseURL: u, Token: "t", AllowInsecureLoopback: true}); err == nil {
 			t.Errorf("New(%q) accepted an unsafe URL", u)
 		}
 	}
 	if _, err := New(Options{BaseURL: "http://127.0.0.1:3000", Token: "t"}); err == nil {
 		t.Error("loopback http accepted without the opt-in")
+	}
+	for _, ok := range []string{"https://uptimeify.io", "https://uptimeify.io/"} {
+		if _, err := New(Options{BaseURL: ok, Token: "t"}); err != nil {
+			t.Errorf("New(%q) rejected: %v", ok, err)
+		}
 	}
 	if _, err := New(Options{BaseURL: "https://uptimeify.io", Token: ""}); err == nil {
 		t.Error("empty token accepted")
@@ -153,5 +161,112 @@ func TestDebugNeverPrintsToken(t *testing.T) {
 	}
 	if buf.Len() == 0 || strings.Contains(buf.String(), "wsm_secret") {
 		t.Fatalf("debug output wrong: %q", buf.String())
+	}
+}
+
+func TestDoCancelsRetryWaitWithContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(429)
+	}))
+	defer srv.Close()
+	c, err := New(Options{BaseURL: srv.URL, Token: "t", AllowInsecureLoopback: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err = c.Do(ctx, "GET", "/api/x", nil, nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want DeadlineExceeded", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("took %v", d)
+	}
+}
+
+func TestAPIErrorStripsControlCharacters(t *testing.T) {
+	c, _ := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		w.Write([]byte(`{"message":"\u001b]0;evil\u0007ok\u009b\ta\nb","data":{"code":"c\u001bd"}}`))
+	}, nil)
+	_, err := c.Do(context.Background(), "GET", "/api/x", nil, nil)
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatal(err)
+	}
+	s := ae.Error()
+	if strings.ContainsAny(s, "\x1b\x07\u009b") || !strings.Contains(s, "ok") {
+		t.Fatalf("not sanitised: %q", s)
+	}
+	if ae.Message != "]0;evilok a b" || ae.Code != "cd" {
+		t.Fatalf("message %q code %q", ae.Message, ae.Code)
+	}
+}
+
+func TestDoRejectsMalformedPaths(t *testing.T) {
+	var hits atomic.Int32
+	c, _ := newTest(t, func(w http.ResponseWriter, r *http.Request) { hits.Add(1); w.Write([]byte(`{}`)) }, nil)
+	for _, p := range []string{"api/x", "/api/x?y=1", "/api/x#z"} {
+		_, err := c.Do(context.Background(), "GET", p, nil, nil)
+		if err == nil || clierr.ExitCode(err) != clierr.Usage {
+			t.Errorf("path %q: err = %v", p, err)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("server got %d requests", hits.Load())
+	}
+	var evil atomic.Int32
+	evilSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { evil.Add(1) }))
+	defer evilSrv.Close()
+	c.Do(context.Background(), "GET", "//"+strings.TrimPrefix(evilSrv.URL, "http://")+"/x", nil, nil)
+	if evil.Load() != 0 {
+		t.Fatal("request reached the evil host")
+	}
+}
+
+func TestDoRefusesRedirectToOtherPort(t *testing.T) {
+	var hits atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
+	defer other.Close()
+	c, _ := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/steal", http.StatusFound)
+	}, nil)
+	_, err := c.Do(context.Background(), "GET", "/api/x", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "another host") {
+		t.Fatalf("err = %v", err)
+	}
+	if hits.Load() != 0 {
+		t.Fatal("request reached the other port")
+	}
+}
+
+func TestDoRejectsOversizedResponse(t *testing.T) {
+	old := maxBody
+	maxBody = 1024
+	t.Cleanup(func() { maxBody = old })
+	c, _ := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(strings.Repeat("a", 2048)))
+	}, nil)
+	if _, err := c.Do(context.Background(), "GET", "/api/x", nil, nil); err == nil {
+		t.Fatal("oversized response accepted")
+	}
+}
+
+func TestRetryAfterIsCapped(t *testing.T) {
+	var waits []time.Duration
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "99999")
+		w.WriteHeader(429)
+	}))
+	defer srv.Close()
+	c, err := New(Options{BaseURL: srv.URL, Token: "t", AllowInsecureLoopback: true, Sleep: func(d time.Duration) { waits = append(waits, d) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Do(context.Background(), "GET", "/api/x", nil, nil)
+	if len(waits) == 0 || waits[0] != 60*time.Second {
+		t.Fatalf("waits = %v", waits)
 	}
 }
