@@ -158,6 +158,12 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "?#") {
 		return nil, clierr.New(clierr.Usage, "invalid path %q", path)
 	}
+	for _, seg := range strings.Split(path[1:], "/") {
+		dec, _ := url.PathUnescape(seg)
+		if seg == "" || seg == "." || seg == ".." || dec == "." || dec == ".." {
+			return nil, clierr.New(clierr.Usage, "invalid path %q", path)
+		}
+	}
 	target := *c.base
 	// Path holds the decoded form and RawPath the escaped one, so a%2Fb is sent as written.
 	unescaped, err := url.PathUnescape(path)

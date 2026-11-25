@@ -40,8 +40,8 @@ func Sanitize(s string) string {
 	}, s)
 }
 
-// sanitizeText is Sanitize for multi-line output: newline and tab survive.
-func sanitizeText(s string) string {
+// SanitizeText is Sanitize for multi-line output: newline and tab survive.
+func SanitizeText(s string) string {
 	return strings.Map(func(r rune) rune {
 		if r != '\t' && r != '\n' && stripped(r) {
 			return -1
@@ -98,7 +98,7 @@ func kind(contentType string) string {
 func Render(w io.Writer, body []byte, contentType string, columns []string, asJSON bool) error {
 	switch kind(contentType) {
 	case "text":
-		_, err := io.WriteString(w, sanitizeText(string(body)))
+		_, err := io.WriteString(w, SanitizeText(string(body)))
 		return err
 	case "other":
 		_, err := w.Write(body)
@@ -126,12 +126,15 @@ func Render(w io.Writer, body []byte, contentType string, columns []string, asJS
 	}
 	var pretty bytes.Buffer
 	if err := json.Indent(&pretty, body, "", "  "); err != nil {
-		_, err := io.WriteString(w, sanitizeText(string(body)))
+		_, err := io.WriteString(w, SanitizeText(string(body)))
 		return err
 	}
-	_, err := fmt.Fprintln(w, sanitizeText(pretty.String()))
+	_, err := fmt.Fprintln(w, SanitizeText(pretty.String()))
 	return err
 }
 
 // IsBinary reports whether a response of this content type is rendered as raw bytes.
 func IsBinary(contentType string) bool { return kind(contentType) == "other" }
+
+// IsJSON reports whether a response of this content type is rendered as JSON.
+func IsJSON(contentType string) bool { return kind(contentType) == "json" }

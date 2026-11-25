@@ -26,8 +26,10 @@ type Doer interface {
 type Deps struct {
 	NewClient func() (Doer, error)
 	Out       io.Writer
-	In        io.Reader
-	IsTTY     func() bool
+	// Err receives prompts, so they stay visible when Out is redirected. Nil falls back to Out.
+	Err   io.Writer
+	In    io.Reader
+	IsTTY func() bool
 	// StdoutIsTTY reports whether standard output is a terminal; binary responses are refused there.
 	StdoutIsTTY func() bool
 }
@@ -84,7 +86,7 @@ func Register(root *cobra.Command, ops []gen.Op, d Deps) {
 		}
 		if op.HasBody {
 			cmd.Flags().String("body", "", "JSON request body: a file path, or - for standard input")
-			cmd.Flags().StringArray("field", nil, "body field as key=value, repeatable (value is read as JSON when it parses, else as text)")
+			cmd.Flags().StringArray("field", nil, "body field, repeatable: key=value sends a string, key:=json sends parsed JSON (numbers, booleans, objects)")
 		}
 		if op.Method == "DELETE" {
 			cmd.Flags().Bool("yes", false, "do not ask for confirmation")

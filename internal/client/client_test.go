@@ -220,9 +220,26 @@ func TestDoRejectsMalformedPaths(t *testing.T) {
 	var evil atomic.Int32
 	evilSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { evil.Add(1) }))
 	defer evilSrv.Close()
-	c.Do(context.Background(), "GET", "//"+strings.TrimPrefix(evilSrv.URL, "http://")+"/x", nil, nil)
+	_, err := c.Do(context.Background(), "GET", "//"+strings.TrimPrefix(evilSrv.URL, "http://")+"/x", nil, nil)
+	if clierr.ExitCode(err) != clierr.Usage {
+		t.Errorf("host-looking path: err = %v", err)
+	}
 	if evil.Load() != 0 {
 		t.Fatal("request reached the evil host")
+	}
+}
+
+func TestDoRejectsDotAndEmptySegments(t *testing.T) {
+	var hits atomic.Int32
+	c, _ := newTest(t, func(w http.ResponseWriter, r *http.Request) { hits.Add(1); w.Write([]byte(`{}`)) }, nil)
+	for _, p := range []string{"/api/x/..", "/api/x/../y", "/api/x/./y", "/api/x//y", "/api/x/", "/api/x/%2e%2e", "/api/x/%2E", "//evil.example/x"} {
+		_, err := c.Do(context.Background(), "GET", p, nil, nil)
+		if err == nil || clierr.ExitCode(err) != clierr.Usage {
+			t.Errorf("path %q: err = %v", p, err)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("server got %d requests", hits.Load())
 	}
 }
 

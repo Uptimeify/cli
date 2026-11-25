@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,12 +45,20 @@ func requestBody(c *cobra.Command, op gen.Op, in io.Reader) ([]byte, error) {
 		obj := map[string]any{}
 		for _, f := range fields {
 			key, value, ok := strings.Cut(f, "=")
+			isJSON := strings.HasSuffix(key, ":")
+			key = strings.TrimSuffix(key, ":")
 			if !ok || key == "" {
-				return nil, clierr.New(clierr.Usage, "--field needs key=value, got %q", f)
+				return nil, clierr.New(clierr.Usage, "--field needs key=value or key:=json, got %q", f)
 			}
+			if !isJSON {
+				obj[key] = value
+				continue
+			}
+			dec := json.NewDecoder(strings.NewReader(value))
+			dec.UseNumber()
 			var parsed any
-			if json.Unmarshal([]byte(value), &parsed) != nil {
-				parsed = value
+			if dec.Decode(&parsed) != nil || dec.More() {
+				return nil, clierr.New(clierr.Usage, "--field %s:=: the value is not valid JSON", key)
 			}
 			obj[key] = parsed
 		}
@@ -70,7 +79,11 @@ func confirm(c *cobra.Command, op gen.Op, target string, d Deps) error {
 	if d.IsTTY == nil || !d.IsTTY() {
 		return clierr.New(clierr.Usage, "refusing to delete without confirmation: pass --yes")
 	}
-	fmt.Fprintf(d.Out, "Delete %s? This cannot be undone. [y/N] ", target)
+	prompt := d.Err
+	if prompt == nil {
+		prompt = d.Out
+	}
+	fmt.Fprintf(prompt, "Delete %s? This cannot be undone. [y/N] ", target)
 	answer, _ := bufio.NewReader(d.In).ReadString('\n')
 	if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
 		return clierr.New(clierr.General, "aborted")
@@ -81,6 +94,10 @@ func confirm(c *cobra.Command, op gen.Op, target string, d Deps) error {
 func execute(c *cobra.Command, args []string, op gen.Op, d Deps) error {
 	path := op.Path
 	for i, p := range op.PathParams {
+		// A dot segment would climb out of the template (.../members/.. is .../teams/5 after a proxy).
+		if dec, _ := url.PathUnescape(args[i]); args[i] == "" || dec == "" || args[i] == "." || args[i] == ".." || dec == "." || dec == ".." {
+			return clierr.New(clierr.Usage, "invalid value %q for <%s>", args[i], p)
+		}
 		path = strings.Replace(path, "{"+p+"}", url.PathEscape(args[i]), 1)
 	}
 	query := url.Values{}
@@ -108,6 +125,11 @@ func execute(c *cobra.Command, args []string, op gen.Op, d Deps) error {
 		return clierr.New(clierr.Usage, "binary response (%s): redirect the output to a file", mediaType(res.ContentType))
 	}
 	asJSON, _ := c.Flags().GetBool("json")
+	if asJSON && d.StdoutIsTTY != nil && d.StdoutIsTTY() && output.IsJSON(res.ContentType) {
+		// Valid JSON strings can still carry raw control characters; a terminal must not act on them.
+		_, err := io.WriteString(d.Out, output.SanitizeText(string(bytes.TrimRight(res.Body, "\n")))+"\n")
+		return err
+	}
 	return output.Render(d.Out, res.Body, res.ContentType, op.Columns, asJSON)
 }
 
