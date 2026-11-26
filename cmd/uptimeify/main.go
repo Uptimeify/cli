@@ -239,6 +239,7 @@ func newRoot(env func(string) string, out, errOut io.Writer, in io.Reader, stdin
 			return nil
 		},
 	})
+	authCmd.AddCommand(newLoginCmd(env, out, errOut, sys), newLogoutCmd(env, out, errOut, sys))
 	root.AddCommand(authCmd)
 
 	root.AddCommand(&cobra.Command{
