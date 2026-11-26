@@ -7,11 +7,77 @@ Status: early development, not released. Nothing is published yet.
 
 ## Install
 
-Build from source (Go required):
+There is no release yet. No binary, Homebrew formula, container image or hosted install script
+exists today, and the commands below will fail until the first release is published. They show what
+the commands will be. The only way to get the CLI now is to build it from source.
+
+### Homebrew (macOS, planned)
+
+    brew install --cask uptimeify/tap/uptimeify
+
+Until the binary is notarized by Apple, macOS may refuse to start it.
+
+### Install script (Linux and macOS, planned)
+
+The script will be served from `https://uptimeify.io/install.sh`. It installs the latest release
+(or `UPTIMEIFY_VERSION=X.Y.Z`) into `~/.local/bin` (or `UPTIMEIFY_INSTALL_DIR`), without sudo and not
+as root. It downloads over HTTPS only, checks the SHA-256 of the archive against `checksums.txt`, and
+then verifies the signature: with `cosign` if it is installed (signature of `checksums.txt`), else with
+the GitHub CLI (`gh attestation verify` of the archive). If neither is installed it stops and says how
+to install one. `UPTIMEIFY_ALLOW_UNSIGNED=1` continues with the checksum only, which catches a damaged
+download but gives no protection against a replaced release. It never skips a verification that
+failed. The install directory must be one you own.
+
+To read it before running it, instead of piping it into a shell:
+
+    curl --proto '=https' --tlsv1.2 -fsSL -o install.sh https://uptimeify.io/install.sh
+    less install.sh
+    sh install.sh
+
+The same script is in this repository as [scripts/install.sh](scripts/install.sh).
+
+### Docker (planned)
+
+    docker run --rm -e UPTIMEIFY_TOKEN ghcr.io/uptimeify/cli:X.Y.Z websites list
+
+The image is `linux/amd64` and `linux/arm64`, runs as a non-root user and contains only the binary
+and CA certificates. To run exactly the image you verified, run it by digest (see below):
+`docker run --rm -e UPTIMEIFY_TOKEN ghcr.io/uptimeify/cli@sha256:<digest> websites list`.
+
+### Build from source
+
+Go is required.
 
     make build
 
 The binary is written to `bin/uptimeify`.
+
+## Verifying a release
+
+Once releases exist, each one is signed and attested. The checksum file is signed with cosign
+(keyless, GitHub Actions identity), the image is signed the same way, and GitHub build provenance
+attestations exist for the archives and the image.
+
+    cosign verify-blob \
+      --certificate-identity 'https://github.com/Uptimeify/cli/.github/workflows/release.yml@refs/tags/vX.Y.Z' \
+      --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+      --bundle checksums.txt.sigstore.json checksums.txt
+    sha256sum --check --ignore-missing checksums.txt
+    gh attestation verify uptimeify_X.Y.Z_linux_amd64.tar.gz --repo Uptimeify/cli \
+      --signer-workflow Uptimeify/cli/.github/workflows/release.yml \
+      --source-ref refs/tags/vX.Y.Z --deny-self-hosted-runners
+
+Image: resolve the digest once, verify that digest, and run that digest. A tag can move, a digest
+cannot.
+
+    digest="$(docker buildx imagetools inspect ghcr.io/uptimeify/cli:X.Y.Z --format '{{.Manifest.Digest}}')"
+    cosign verify \
+      --certificate-identity 'https://github.com/Uptimeify/cli/.github/workflows/release.yml@refs/tags/vX.Y.Z' \
+      --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+      "ghcr.io/uptimeify/cli@$digest"
+    docker run --rm "ghcr.io/uptimeify/cli@$digest" --version
+
+The full list of checks, including the image, is in [RELEASING.md](RELEASING.md).
 
 ## Usage
 
@@ -102,6 +168,7 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
     make test
     make generate   # after updating spec/openapi.json
     make check      # tests, go vet, vulnerability scan
+    scripts/install_test.sh   # tests of the install script, no network
 
 `scripts/acceptance.sh` runs the built binary against a non-production instance. It creates and
 deletes one tag. It refuses any host except `127.0.0.1` and `localhost`, unless

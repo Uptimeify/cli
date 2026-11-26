@@ -9,11 +9,11 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -42,3 +42,57 @@ jobs:
         run: |
           git show origin/main:internal/commands/ops.json > "$RUNNER_TEMP/old-ops.json" 2>/dev/null || exit 0
           go run ./internal/gen/cmd -check-breaking "$RUNNER_TEMP/old-ops.json" internal/commands/ops.json
+  # Proves the release chain builds, without publishing, signing or pushing anything.
+  # The required job above stays `checks`.
+  release-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - uses: anchore/sbom-action/download-syft@dfcb83b97731532d72be422cbc51ee64adb6fd56 # v0.24.4
+        with:
+          syft-version: v1.57.2
+      - name: syft is on PATH
+        run: syft version
+      - name: scripts parse
+        run: |
+          for f in scripts/install.sh scripts/install_test.sh; do sh -n "$f"; done
+          for f in scripts/check-commit-messages.sh scripts/acceptance.sh; do bash -n "$f"; done
+      - name: shellcheck
+        run: |
+          # koalaman/shellcheck v0.11.0, pinned by digest
+          sc() { docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d "$@"; }
+          sc -s sh scripts/install.sh scripts/install_test.sh
+          sc -S warning scripts/check-commit-messages.sh scripts/acceptance.sh
+      - run: scripts/install_test.sh
+      # Same install as release.yml: `go install` is verified by the Go checksum database,
+      # goreleaser-action is not (it only warns when its own verification fails).
+      - name: install goreleaser v2.20.3 (verified by the Go checksum database)
+        working-directory: ${{ runner.temp }}
+        env:
+          GOFLAGS: ""
+        run: |
+          set -eu
+          unset GONOSUMCHECK GONOSUMDB GOINSECURE GOPRIVATE GONOPROXY
+          export GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org
+          go install github.com/goreleaser/goreleaser/v2@v2.20.3
+      - name: goreleaser check
+        run: '"$(go env GOPATH)/bin/goreleaser" check'
+      - name: goreleaser snapshot build
+        run: '"$(go env GOPATH)/bin/goreleaser" release --snapshot --clean --skip=publish,sign,notarize'
+      - name: the image runs and reports the injected version
+        run: |
+          img="$(docker image ls --format '{{.Repository}}:{{.Tag}}' ghcr.io/uptimeify/cli | grep -- '-amd64$' | head -n 1)"
+          [ -n "$img" ] || { echo "no snapshot image found" >&2; exit 1; }
+          out="$(docker run --rm "$img" --version)"
+          echo "$out"
+          case "$out" in
+            "uptimeify version 0.0.0-SNAPSHOT-"*) ;;
+            *) echo "unexpected version output" >&2; exit 1 ;;
+          esac

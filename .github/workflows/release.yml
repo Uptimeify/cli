@@ -1,0 +1,154 @@
+name: Release
+# Runs only for version tags. Nothing here runs on a branch or a pull request.
+on:
+  push:
+    tags: ["v*.*.*"]
+permissions:
+  contents: read
+# Two releases must never run at once, and a running release is never cancelled half way.
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  # No secrets and read-only token. The `release` job below only starts when this one passed.
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: tag is a version, annotated, and on main
+        env:
+          TAG: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          [ "$REF_TYPE" = "tag" ] || { echo "not a tag" >&2; exit 1; }
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "tag $TAG is not vX.Y.Z" >&2; exit 1 ;;
+          esac
+          if printf '%s' "$TAG" | grep -Eqv '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'; then
+            echo "tag $TAG is not a semantic version" >&2; exit 1
+          fi
+          # actions/checkout can replace an annotated tag with a plain ref to the commit.
+          # Fetch the tag object itself so its type can be checked. The repository is public.
+          git fetch --force --no-tags origin "+refs/tags/$TAG:refs/tags/$TAG"
+          [ "$(git cat-file -t "refs/tags/$TAG")" = "tag" ] || {
+            echo "tag $TAG is a lightweight tag, create it with git tag -s (or -a)" >&2; exit 1
+          }
+          [ "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$SHA" ] || {
+            echo "tag $TAG does not point at the commit this run started with" >&2; exit 1
+          }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$SHA" origin/main || {
+            echo "tag $TAG is not on main" >&2; exit 1
+          }
+          # The signature itself cannot be checked here (no key ring). Say what the tag is.
+          if git cat-file tag "refs/tags/$TAG" | grep -q -- '-----BEGIN \(PGP\|SSH\) SIGNATURE-----'; then
+            echo "tag $TAG carries a signature (not verified by this job)"
+          else
+            echo "::warning::tag $TAG is annotated but not signed"
+          fi
+      # cache: false on purpose. A tag run must never restore a Go cache that another run (a pull
+      # request, a branch) saved: that is how a poisoned build cache would reach a signed release.
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: false
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    # The owner can require a reviewer on this environment. Secrets are scoped to it.
+    environment: release
+    permissions:
+      contents: write # create the GitHub release and upload assets
+      id-token: write # keyless signing (cosign) and attestations
+      packages: write # push ghcr.io/uptimeify/cli
+      attestations: write # build provenance
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: tag still points at the verified commit
+        env:
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          git fetch --force --no-tags origin "+refs/tags/$TAG:refs/tags/$TAG"
+          [ "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$SHA" ] || {
+            echo "tag $TAG moved since the verify job" >&2; exit 1
+          }
+      # cache: false on purpose. A tag run must never restore a Go cache that another run (a pull
+      # request, a branch) saved: that is how a poisoned build cache would reach a signed release.
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: false
+      - uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
+        with:
+          cosign-release: v3.1.6
+      - uses: anchore/sbom-action/download-syft@dfcb83b97731532d72be422cbc51ee64adb6fd56 # v0.24.4
+        with:
+          syft-version: v1.57.2
+      - name: cosign and syft are on PATH
+        run: |
+          cosign version
+          syft version
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          # The BuildKit image does the image build. Pinned by digest (moby/buildkit v0.35.1, the
+          # multi-arch index digest), so a moved tag cannot change the builder.
+          driver-opts: image=moby/buildkit:v0.35.1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # GoReleaser is installed with `go install`, not with goreleaser-action: the action only warns
+      # when its checksum/bundle download fails and verifies with cosign only if cosign happens
+      # to be on PATH. `go install` checks the module against the Go checksum database
+      # (sum.golang.org) and fails closed. Run outside the checkout so go.mod is not touched.
+      - name: install goreleaser v2.20.3 (verified by the Go checksum database)
+        working-directory: ${{ runner.temp }}
+        env:
+          GOFLAGS: ""
+        run: |
+          set -eu
+          unset GONOSUMCHECK GONOSUMDB GOINSECURE GOPRIVATE GONOPROXY
+          export GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org
+          go install github.com/goreleaser/goreleaser/v2@v2.20.3
+          "$(go env GOPATH)/bin/goreleaser" --version
+      - name: goreleaser release
+        run: '"$(go env GOPATH)/bin/goreleaser" release --clean'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Fine-grained PAT, only Uptimeify/homebrew-tap, contents: write.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # Optional. notarize.macos in .goreleaser.yaml stays off unless all five are set.
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+      - name: provenance for the release files
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/checksums.txt
+      - name: provenance for the image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/digests.txt

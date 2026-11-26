@@ -1,0 +1,194 @@
+# GoReleaser configuration (schema version 2). Run by .github/workflows/release.yml on a tag.
+# Local check: goreleaser check
+# Local dry run: goreleaser release --snapshot --clean --skip=publish,sign,docker,sbom
+version: 2
+
+project_name: uptimeify
+
+# The tag is the only source of the version. Nothing here rewrites go.mod or go.sum.
+report_sizes: true
+
+# Snapshot builds (CI, local dry run) never push. A fixed version keeps them recognisable.
+snapshot:
+  version_template: "0.0.0-SNAPSHOT-{{ .ShortCommit }}"
+
+builds:
+  - id: uptimeify
+    main: ./cmd/uptimeify
+    binary: uptimeify
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+      # No VCS stamping: the build must not depend on git state or file ownership of the
+      # checkout. The version comes from the ldflags below, the commit from the tag.
+      - -buildvcs=false
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    # Same commit, same file timestamps in the archive.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: uptimeify
+    ids: [uptimeify]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # scripts/install.sh builds the archive name from this template. Change both together.
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# One SBOM per archive, made with syft (installed by the workflow).
+sboms:
+  - id: archive
+    artifacts: archive
+    documents:
+      - "${artifact}.sbom.spdx.json"
+    cmd: syft
+    args: ["$artifact", "--output", "spdx-json=$document"]
+
+# Keyless signature of the checksum file: GitHub OIDC identity, Sigstore certificate, one
+# .sigstore.json bundle (signature, certificate and transparency log entry).
+signs:
+  - id: checksums
+    cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+# macOS signing and notarization. Disabled unless all five secrets are present, see RELEASING.md.
+# isEnvSet is false for an unset or empty variable, so a missing secret keeps this block off.
+notarize:
+  macos:
+    - enabled: '{{ and (isEnvSet "MACOS_SIGN_P12") (isEnvSet "MACOS_SIGN_PASSWORD") (isEnvSet "MACOS_NOTARY_KEY") (isEnvSet "MACOS_NOTARY_KEY_ID") (isEnvSet "MACOS_NOTARY_ISSUER_ID") }}'
+      ids: [uptimeify]
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+        timeout: 20m
+
+# Homebrew. GoReleaser deprecated `brews` in v2.10 in favour of casks; a cask has no `test`
+# stanza, so there is no `uptimeify --version` check in the tap. The token is a fine-grained
+# PAT limited to Uptimeify/homebrew-tap (contents: write), not the workflow token.
+homebrew_casks:
+  - name: uptimeify
+    ids: [uptimeify]
+    binaries: [uptimeify]
+    homepage: https://uptimeify.io
+    description: Command line interface for Uptimeify
+    # Not uploaded for prerelease tags such as v1.0.0-rc.1.
+    skip_upload: auto
+    repository:
+      owner: Uptimeify
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    commit_msg_template: "uptimeify {{ .Tag }}"
+    # No xattr hook that strips the macOS quarantine flag: that would switch off Gatekeeper
+    # for this binary. Until the binary is notarized, macOS may refuse to start it.
+    caveats: |
+      License: MPL-2.0
+      Releases are signed with Sigstore. To verify, see https://github.com/Uptimeify/cli#verifying-a-release
+
+dockers_v2:
+  - id: uptimeify
+    ids: [uptimeify]
+    dockerfile: Dockerfile
+    images:
+      - ghcr.io/uptimeify/cli
+    tags:
+      - "{{ .Version }}"
+      # Not moved by prerelease tags.
+      - '{{ if not .Prerelease }}latest{{ end }}'
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: uptimeify
+      org.opencontainers.image.description: Command line interface for Uptimeify
+      org.opencontainers.image.source: https://github.com/Uptimeify/cli
+      org.opencontainers.image.url: https://uptimeify.io
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.licenses: MPL-2.0
+    annotations:
+      "index,manifest:org.opencontainers.image.source": https://github.com/Uptimeify/cli
+      "index,manifest:org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "index,manifest:org.opencontainers.image.version": "{{ .Version }}"
+      "index,manifest:org.opencontainers.image.licenses": MPL-2.0
+    # No BuildKit SBOM attestation. It would pull docker/buildkit-syft-scanner by tag, and
+    # GoReleaser's `flags` also reach the `--load` builds, where an attestation does not apply, so the
+    # scanner image cannot be pinned by digest here. The archive SBOMs (syft, pinned) stay.
+    sbom: false
+
+# Keyless signature of the image by digest (not by tag).
+docker_signs:
+  - id: image
+    cmd: cosign
+    args:
+      - sign
+      - "${artifact}@${digest}"
+      - "--yes"
+    artifacts: all
+    output: true
+
+# digests.txt feeds actions/attest-build-provenance for the image.
+docker_digest:
+  name_template: digests.txt
+
+changelog:
+  use: git
+  sort: asc
+  abbrev: -1
+  format: "{{ .Message }}"
+  groups:
+    - title: Features
+      regexp: '^feat(\([[:word:]\-]+\))?!?:'
+      order: 0
+    - title: Fixes
+      regexp: '^fix(\([[:word:]\-]+\))?!?:'
+      order: 1
+    - title: Security
+      regexp: '^sec(urity)?(\([[:word:]\-]+\))?!?:'
+      order: 2
+    - title: Performance
+      regexp: '^perf(\([[:word:]\-]+\))?!?:'
+      order: 3
+    - title: Build, CI and docs
+      regexp: '^(build|ci|docs)(\([[:word:]\-]+\))?!?:'
+      order: 4
+    - title: Other
+      order: 999
+  filters:
+    exclude:
+      - '^Merge '
+      - '^test(\([[:word:]\-]+\))?:'
+
+release:
+  github:
+    owner: Uptimeify
+    name: cli
+  # A tag such as v1.0.0-rc.1 becomes a GitHub prerelease.
+  prerelease: auto
+  # The release is published directly. The approval gate is the `release` environment of the
+  # workflow, before anything runs.
+  draft: false

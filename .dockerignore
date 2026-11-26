@@ -1,0 +1,10 @@
+# The image is assembled from the GoReleaser build context. Keep everything else out.
+.git
+.github
+bin
+dist
+spec
+internal
+cmd
+scripts
+*.md
