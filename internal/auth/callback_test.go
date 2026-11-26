@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -349,5 +350,65 @@ func TestBrowserCommandChecksTheParsedAddress(t *testing.T) {
 	cmd, err := browserCommand("linux", "https://uptimeify.io/a?b=1&c=2")
 	if err != nil || cmd.Args[len(cmd.Args)-1] != "https://uptimeify.io/a?b=1&c=2" || len(cmd.Args) != 2 {
 		t.Errorf("cmd = %v, err = %v", cmd, err)
+	}
+}
+
+// rawRequest sends request bytes to addr and returns the status line.
+func rawRequest(t *testing.T, addr, request string) string {
+	t.Helper()
+	c, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	_, _ = io.WriteString(c, request)
+	line, _ := bufio.NewReader(c).ReadString('\n')
+	return strings.TrimSpace(line)
+}
+
+func TestReceiverRefusesForeignHostAndHugeHeaders(t *testing.T) {
+	ln, redirect, err := listenLoopback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	type result struct {
+		code string
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		code, err := waitForCallback(ctx, ln, "state-1")
+		done <- result{code, err}
+	}()
+	_ = redirect
+	q := "/callback?code=" + "c1" + "&state=state-1"
+	if got := rawRequest(t, addr, "GET "+q+" HTTP/1.1\r\nHost: evil.example:"+addr[strings.LastIndex(addr, ":")+1:]+"\r\nConnection: close\r\n\r\n"); !strings.Contains(got, "404") {
+		t.Errorf("foreign Host: %q, want 404", got)
+	}
+	if got := rawRequest(t, addr, "GET "+q+" HTTP/1.1\r\nHost: "+addr+"\r\nX-Pad: "+strings.Repeat("a", 16<<10)+"\r\nConnection: close\r\n\r\n"); strings.Contains(got, "200") {
+		t.Errorf("a 16 KB header was accepted: %q", got)
+	}
+	select {
+	case r := <-done:
+		t.Fatalf("the callback ended with %+v before the right request", r)
+	default:
+	}
+	if got := rawRequest(t, addr, "GET "+q+" HTTP/1.1\r\nHost: "+addr+"\r\nConnection: close\r\n\r\n"); !strings.Contains(got, "200") {
+		t.Errorf("right request: %q", got)
+	}
+	if r := <-done; r.err != nil || r.code != "c1" {
+		t.Errorf("result = %+v", r)
+	}
+}
+
+func TestReceiverServerLimits(t *testing.T) {
+	srv := newReceiverServer(http.NotFoundHandler())
+	if srv.MaxHeaderBytes != 8<<10 || srv.ReadHeaderTimeout != 10*time.Second || srv.ReadTimeout != 10*time.Second ||
+		srv.WriteTimeout != 10*time.Second || srv.IdleTimeout != 5*time.Second {
+		t.Errorf("limits = %d %v %v %v %v", srv.MaxHeaderBytes, srv.ReadHeaderTimeout, srv.ReadTimeout, srv.WriteTimeout, srv.IdleTimeout)
 	}
 }

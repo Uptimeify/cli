@@ -24,3 +24,8 @@ func tryLock(f *os.File) (bool, error) {
 func unlockFile(f *os.File) error {
 	return unix.Flock(int(f.Fd()), unix.LOCK_UN)
 }
+
+// openLockFile opens (or creates) the lock file without following a symlink at path.
+func openLockFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_CREATE|os.O_RDWR|unix.O_NOFOLLOW, 0o600)
+}

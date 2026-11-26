@@ -25,3 +25,9 @@ func tryLock(f *os.File) (bool, error) {
 func unlockFile(f *os.File) error {
 	return windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, new(windows.Overlapped))
 }
+
+// openLockFile opens (or creates) the lock file. Windows has no O_NOFOLLOW; the caller compares
+// the opened file with the one at the path after locking.
+func openLockFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+}

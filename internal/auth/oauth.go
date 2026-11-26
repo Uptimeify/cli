@@ -128,8 +128,10 @@ func clean(s string, secrets ...string) string {
 
 // retryAfter reads the Retry-After header, then data.retryAfter from a Nuxt error body, else 60 s.
 func retryAfter(h http.Header, raw []byte) time.Duration {
-	if s, err := strconv.Atoi(h.Get("Retry-After")); err == nil && s > 0 {
-		return time.Duration(s) * time.Second
+	// Capped at a day like the client's own Retry-After handling; negative and unreadable values
+	// are ignored. An absurdly large number counts as the cap.
+	if s, err := strconv.ParseInt(strings.TrimSpace(h.Get("Retry-After")), 10, 64); (err == nil || errors.Is(err, strconv.ErrRange) && s > 0) && s > 0 {
+		return time.Duration(min(s, 86400)) * time.Second
 	}
 	var body struct {
 		Data struct {

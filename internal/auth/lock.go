@@ -44,16 +44,29 @@ func acquireLock(ctx context.Context, path string, wait time.Duration) (release 
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create the sign-in lock directory: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := openLockFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("open the sign-in lock: %w", err)
 	}
 	deadline := time.Now().Add(wait)
-	for {
+	for reopened := 0; ; {
 		ok, err := tryLock(f)
 		if err != nil {
 			f.Close()
 			return nil, fmt.Errorf("lock the sign-in: %w", err)
+		}
+		if ok && !sameAsPath(f, path) {
+			// The path was replaced after the open (a swapped file or symlink): what is locked is
+			// not the lock file. Let go and open the path again, a few times at most.
+			_ = unlockFile(f)
+			f.Close()
+			if reopened++; reopened > 3 {
+				return nil, clierr.New(clierr.General, "the sign-in lock file keeps changing under the CLI: check %s", filepath.Dir(path))
+			}
+			if f, err = openLockFile(path); err != nil {
+				return nil, fmt.Errorf("open the sign-in lock: %w", err)
+			}
+			continue
 		}
 		if ok {
 			var once sync.Once
@@ -77,4 +90,14 @@ func acquireLock(ctx context.Context, path string, wait time.Duration) (release 
 		case <-timer.C:
 		}
 	}
+}
+
+// sameAsPath reports whether f is the regular file that path names now, not a symlink to it.
+func sameAsPath(f *os.File, path string) bool {
+	opened, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	named, err := os.Lstat(path)
+	return err == nil && named.Mode().IsRegular() && os.SameFile(opened, named)
 }

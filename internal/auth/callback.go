@@ -83,6 +83,20 @@ func evaluateCallback(q url.Values) callbackResult {
 	return callbackResult{code: q.Get("code")}
 }
 
+// newReceiverServer is the loopback receiver's server with tight limits: it only ever sees one
+// short GET from the browser.
+func newReceiverServer(h http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           h,
+		MaxHeaderBytes:    8 << 10,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       5 * time.Second,
+		ErrorLog:          log.New(io.Discard, "", 0),
+	}
+}
+
 // waitForCallback serves ln until exactly one GET /callback with the right Host header and the
 // state of this sign-in arrived, or ctx ends. The state is checked first. Every other request
 // (other path, method or Host, missing, repeated or wrong state, anything after the one) gets 404,
@@ -118,7 +132,7 @@ func waitForCallback(ctx context.Context, ln net.Listener, state string) (code s
 		_, _ = io.WriteString(w, page)
 		results <- res
 	})
-	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second, ErrorLog: log.New(io.Discard, "", 0)}
+	srv := newReceiverServer(h)
 	go func() { _ = srv.Serve(ln) }()
 	defer func() {
 		sctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

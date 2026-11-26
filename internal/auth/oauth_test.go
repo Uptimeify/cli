@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/uptimeify/cli/internal/clierr"
 )
@@ -457,5 +458,26 @@ func TestRevokeForm(t *testing.T) {
 	status.Store(http.StatusBadRequest)
 	if err := o.Revoke(context.Background(), "ucli_abc", refresh); err == nil || !strings.Contains(err.Error(), "400") {
 		t.Fatalf("400: err = %v", err)
+	}
+}
+
+func TestRetryAfterIsCappedAndIgnoresBadValues(t *testing.T) {
+	cases := map[string]time.Duration{
+		"120":                  120 * time.Second,
+		"99999999":             86400 * time.Second,
+		"99999999999999999999": 86400 * time.Second,
+		"-5":                   60 * time.Second,
+		"0":                    60 * time.Second,
+		"soon":                 60 * time.Second,
+		"":                     60 * time.Second,
+	}
+	for in, want := range cases {
+		h := http.Header{}
+		if in != "" {
+			h.Set("Retry-After", in)
+		}
+		if got := retryAfter(h, nil); got != want {
+			t.Errorf("Retry-After %q = %v, want %v", in, got, want)
+		}
 	}
 }
