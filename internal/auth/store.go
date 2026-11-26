@@ -4,11 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/zalando/go-keyring"
+
+	"github.com/uptimeify/cli/internal/clierr"
 )
 
 // KeyringService is the service name of every keyring entry the CLI writes.
@@ -88,9 +92,32 @@ type Access struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// Origin is the profile key of a host: scheme and host (with port) in lower case.
-func Origin(base *url.URL) string {
-	return base.Scheme + "://" + strings.ToLower(base.Host)
+// Origin is the profile key of a host and the one place that builds it: scheme and host in lower
+// case, the default port left out (:443 for https, :80 for http). A host with non-ASCII characters
+// is refused, so a look-alike name never shares a keyring entry or a lock with the real one. The
+// keyring entries, the lock and the OAuth requests all use this value.
+func Origin(base *url.URL) (string, error) {
+	scheme := strings.ToLower(base.Scheme)
+	host := strings.ToLower(base.Hostname())
+	if host == "" {
+		return "", clierr.New(clierr.Usage, "the API URL has no host")
+	}
+	for _, r := range host {
+		if r > unicode.MaxASCII {
+			return "", clierr.New(clierr.Usage, "the API host must be plain ASCII (use the punycode form of an international name)")
+		}
+	}
+	port := base.Port()
+	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
+		port = ""
+	}
+	if port == "" {
+		if strings.Contains(host, ":") {
+			host = "[" + host + "]"
+		}
+		return scheme + "://" + host, nil
+	}
+	return scheme + "://" + net.JoinHostPort(host, port), nil
 }
 
 func credentialsKey(origin string) string { return origin }

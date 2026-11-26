@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/uptimeify/cli/internal/auth"
+	"github.com/uptimeify/cli/internal/client"
 	"github.com/uptimeify/cli/internal/clierr"
 )
 
@@ -318,5 +319,35 @@ func TestAuthGroupHasNoGeneratedCollision(t *testing.T) {
 	}
 	if got := strings.Join(authKids, ","); got != "login,logout,status" {
 		t.Errorf("auth commands = %s", got)
+	}
+}
+
+// The sign-in profile and the API client must come from the same parsed URL.
+func TestManagerOriginMatchesClientURL(t *testing.T) {
+	for _, raw := range []string{"https://UPTIMEIFY.io:443", "https://uptimeify.io/", "HTTP://127.0.0.1:80"} {
+		env := func(k string) string {
+			switch k {
+			case "UPTIMEIFY_API_URL":
+				return raw
+			case "UPTIMEIFY_ALLOW_INSECURE_LOOPBACK":
+				return "1"
+			}
+			return ""
+		}
+		m, err := newManager(env, system{store: nil}, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		base, err := client.BaseURL(raw, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := auth.Origin(base)
+		if err != nil || m.Origin != want || m.OAuth.Origin != want {
+			t.Errorf("%q: manager %q, oauth %q, client %q (%v)", raw, m.Origin, m.OAuth.Origin, want, err)
+		}
+		if m.OAuth.HTTP == nil || m.OAuth.HTTP.Timeout <= 0 || m.OAuth.HTTP.Timeout > 45*time.Second {
+			t.Errorf("%q: OAuth HTTP client needs a total timeout of at most 45 s", raw)
+		}
 	}
 }

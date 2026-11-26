@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io/fs"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -274,17 +275,40 @@ func TestClearSessionRemovesBothEntries(t *testing.T) {
 
 func TestOrigin(t *testing.T) {
 	cases := map[string]string{
-		"https://Uptimeify.IO":  "https://uptimeify.io",
-		"https://uptimeify.io/": "https://uptimeify.io",
-		"http://127.0.0.1:3047": "http://127.0.0.1:3047",
+		"https://Uptimeify.IO":      "https://uptimeify.io",
+		"HTTPS://uptimeify.io/":     "https://uptimeify.io",
+		"https://uptimeify.io:443":  "https://uptimeify.io",
+		"http://127.0.0.1:80":       "http://127.0.0.1",
+		"http://127.0.0.1:3047":     "http://127.0.0.1:3047",
+		"https://uptimeify.io:8443": "https://uptimeify.io:8443",
+		"https://[::1]:443":         "https://[::1]",
 	}
 	for in, want := range cases {
 		u, err := url.Parse(in)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := Origin(u); got != want {
-			t.Errorf("Origin(%q) = %q, want %q", in, got, want)
+		got, err := Origin(u)
+		if err != nil || got != want {
+			t.Errorf("Origin(%q) = %q, %v, want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"https://uptimeify.io\u2024ru", "https://uptimeif\u0443.io", "https://m\u00fcnchen.example"} {
+		u, err := url.Parse(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := Origin(u); err == nil {
+			t.Errorf("Origin(%q) = %q, want an error for a non-ASCII host", in, got)
+		}
+	}
+}
+
+func TestOAuthHTTPClientAlwaysHasTimeout(t *testing.T) {
+	for name, o := range map[string]*OAuth{"nil": {}, "zero": {HTTP: &http.Client{}}} {
+		c := o.httpClient()
+		if c.Timeout <= 0 || c.Timeout > lockWait {
+			t.Errorf("%s: timeout = %v, want 0 < t <= lock wait %v", name, c.Timeout, lockWait)
 		}
 	}
 }

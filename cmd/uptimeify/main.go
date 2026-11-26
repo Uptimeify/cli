@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -42,16 +43,22 @@ type system struct {
 
 // newManager builds the sign-in manager for the host in UPTIMEIFY_API_URL. The host is the
 // profile: another host has its own keyring entries and needs its own sign-in.
-func newManager(env func(string) string, sys system, debug io.Writer) (*auth.Manager, error) {
+func newManager(env func(string) string, sys system, debug, warn io.Writer) (*auth.Manager, error) {
 	base, err := client.BaseURL(apiURL(env), env("UPTIMEIFY_ALLOW_INSECURE_LOOPBACK") == "1")
 	if err != nil {
 		return nil, err
 	}
-	origin := auth.Origin(base)
+	origin, err := auth.Origin(base)
+	if err != nil {
+		return nil, err
+	}
 	return &auth.Manager{
-		Origin:   origin,
-		Store:    sys.store,
-		OAuth:    &auth.OAuth{Origin: origin, UserAgent: client.UserAgent(version), Debug: debug},
+		Origin: origin,
+		Store:  sys.store,
+		// The total timeout matters: the sign-in lock waits at most 45 s, a client without a limit
+		// would hold it for as long as the server keeps the connection.
+		OAuth:    &auth.OAuth{Origin: origin, UserAgent: client.UserAgent(version), Debug: debug, HTTP: &http.Client{Timeout: 30 * time.Second}},
+		Warn:     warn,
 		LockDir:  sys.lockDir,
 		Hostname: sys.hostname,
 	}, nil
@@ -117,7 +124,7 @@ func newRoot(env func(string) string, out, errOut io.Writer, in io.Reader, stdin
 		if o.Token == "" {
 			// UPTIMEIFY_TOKEN takes precedence. The keyring is read only without it, so CI jobs and
 			// containers without a keyring behave exactly as before.
-			m, err := newManager(env, sys, o.Debug)
+			m, err := newManager(env, sys, o.Debug, errOut)
 			if err != nil {
 				return nil, err
 			}
@@ -165,7 +172,7 @@ func newRoot(env func(string) string, out, errOut io.Writer, in io.Reader, stdin
 			var st *auth.Status
 			var keyErr error
 			if urlErr == nil {
-				if m, keyErr = newManager(env, sys, nil); keyErr == nil {
+				if m, keyErr = newManager(env, sys, nil, errOut); keyErr == nil {
 					st, keyErr = m.Status()
 				}
 			}

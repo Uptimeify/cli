@@ -45,7 +45,7 @@ type OAuth struct {
 	Origin    string // e.g. https://uptimeify.io, no trailing slash
 	UserAgent string
 	Debug     io.Writer    // nil: no debug lines
-	HTTP      *http.Client // nil: 30 s timeout, never follows a redirect
+	HTTP      *http.Client // nil or without Timeout: 30 s timeout; never follows a redirect
 }
 
 type Registration struct {
@@ -103,6 +103,10 @@ func (o *OAuth) httpClient() *http.Client {
 		return &http.Client{Timeout: 30 * time.Second, CheckRedirect: noRedirect}
 	}
 	c := *o.HTTP
+	if c.Timeout <= 0 {
+		// The sign-in lock waits at most lockWait; a client without a limit would hold it forever.
+		c.Timeout = 30 * time.Second
+	}
 	c.CheckRedirect = noRedirect
 	return &c
 }

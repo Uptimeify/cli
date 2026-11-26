@@ -37,6 +37,7 @@ type Manager struct {
 	LockDir  string                 // user cache directory; "" makes renewal fail with a clear error
 	Hostname func() (string, error) // nil: os.Hostname
 	Now      func() time.Time       // nil: time.Now
+	Warn     io.Writer              // stderr: notes that need no action; nil: none
 }
 
 // LoginOptions steer one browser sign-in.

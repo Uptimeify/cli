@@ -44,7 +44,7 @@ func newLoginCmd(env func(string) string, out, errOut io.Writer, sys system) *co
 			if env("UPTIMEIFY_DEBUG") == "1" {
 				debug = errOut
 			}
-			m, err := newManager(env, sys, debug)
+			m, err := newManager(env, sys, debug, errOut)
 			if err != nil {
 				return err
 			}
@@ -82,7 +82,7 @@ func newLogoutCmd(env func(string) string, out, errOut io.Writer, sys system) *c
 			if env("UPTIMEIFY_DEBUG") == "1" {
 				debug = errOut
 			}
-			m, err := newManager(env, sys, debug)
+			m, err := newManager(env, sys, debug, errOut)
 			if err != nil {
 				return err
 			}
