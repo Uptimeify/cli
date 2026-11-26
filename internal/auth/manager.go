@@ -38,6 +38,9 @@ type Manager struct {
 	Hostname func() (string, error) // nil: os.Hostname
 	Now      func() time.Time       // nil: time.Now
 	Warn     io.Writer              // stderr: notes that need no action; nil: none
+
+	mem    *Access // access token that did not fit into the keyring: held in this process only
+	warned bool
 }
 
 // LoginOptions steer one browser sign-in.
@@ -215,11 +218,39 @@ func (m *Manager) Login(ctx context.Context, o LoginOptions) (*Credentials, erro
 	cred.GrantStartedAt = now
 	cred.RefreshedAt = now
 	if err := saveCredentials(m.Store, m.Origin, cred); err != nil {
+		// The server has issued a refresh token the CLI cannot keep: end it there, best effort.
+		m.revokeQuietly(cred.ClientID, tr.RefreshToken)
+		if errors.Is(err, ErrEntryTooBig) {
+			return nil, clierr.New(clierr.Auth, "the sign-in record is too large for the system keyring (%v), so nothing was stored. Request fewer scopes, or set UPTIMEIFY_TOKEN to an API token instead", err)
+		}
 		return nil, clierr.New(clierr.Auth, "signed in, but the system keyring did not store the sign-in (%v): run `uptimeify auth login` again", err)
 	}
-	// A lost access token only costs one renewal on the next command.
-	_ = saveAccess(m.Store, m.Origin, &Access{Token: tr.AccessToken, ExpiresAt: now.Add(time.Duration(tr.ExpiresIn) * time.Second)})
+	m.keepAccess(&Access{Token: tr.AccessToken, ExpiresAt: now.Add(time.Duration(tr.ExpiresIn) * time.Second)})
 	return cred, nil
+}
+
+// revokeQuietly ends a refresh token on the server and ignores the outcome. It runs after the
+// result that matters is decided, so it gets its own short time limit.
+func (m *Manager) revokeQuietly(clientID, refreshToken string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return m.OAuth.Revoke(ctx, clientID, refreshToken)
+}
+
+// keepAccess stores the access token. A token that does not fit into the keyring stays in this
+// process, and the user gets one hint per command (never the token).
+func (m *Manager) keepAccess(a *Access) {
+	m.mem = a
+	err := saveAccess(m.Store, m.Origin, a)
+	if err == nil {
+		return
+	}
+	// A failed write must not leave an older token that the next process would trust.
+	_ = m.Store.Delete(accessKey(m.Origin))
+	if errors.Is(err, ErrEntryTooBig) && !m.warned && m.Warn != nil {
+		m.warned = true
+		fmt.Fprintln(m.Warn, "Note: the access token is too large for the system keyring. It is kept in memory for this command only, and the next command renews it again.")
+	}
 }
 
 // SignedIn reports whether a usable sign-in is stored. A missing keyring is an error.

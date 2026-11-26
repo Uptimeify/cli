@@ -37,6 +37,9 @@ func (m *Manager) Renew(ctx context.Context, rejected string) (string, error) {
 }
 
 func (m *Manager) cachedAccess() (string, bool) {
+	if a := m.mem; a != nil && a.ExpiresAt.After(m.now().Add(accessMargin)) {
+		return a.Token, true
+	}
 	a, err := loadAccess(m.Store, m.Origin)
 	if err != nil || !a.ExpiresAt.After(m.now().Add(accessMargin)) {
 		return "", false
@@ -102,7 +105,7 @@ func (m *Manager) refresh(ctx context.Context, rejected string) (string, error) 
 	if err := saveCredentials(m.Store, m.Origin, cred); err != nil {
 		return "", clierr.New(clierr.Auth, "the sign-in was renewed, but the system keyring did not store it (%v): run `uptimeify auth login`", err)
 	}
-	_ = saveAccess(m.Store, m.Origin, &Access{Token: tr.AccessToken, ExpiresAt: now.Add(time.Duration(tr.ExpiresIn) * time.Second)})
+	m.keepAccess(&Access{Token: tr.AccessToken, ExpiresAt: now.Add(time.Duration(tr.ExpiresIn) * time.Second)})
 	return tr.AccessToken, nil
 }
 

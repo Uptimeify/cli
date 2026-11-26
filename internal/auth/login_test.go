@@ -54,6 +54,7 @@ type fakeOAuthServer struct {
 	omitScope               bool   // token answers carry no scope at all
 	failExchange            bool   // the code exchange answers invalid_grant
 	refreshDelay            time.Duration
+	accessPad               int // characters of padding in every access token, to make it long
 	revokeStatus            int // 0 means 200
 	revokeForm              url.Values
 }
@@ -132,7 +133,7 @@ func (fs *fakeOAuthServer) issueLocked() map[string]any {
 	fs.counter++
 	fs.refresh = fmt.Sprintf("rt-%d", fs.counter)
 	body := map[string]any{
-		"access_token":  fakeJWT(map[string]any{"sub": "user-1", "scope": "api:monitors:read", "n": fs.counter}),
+		"access_token":  fakeJWT(map[string]any{"sub": "user-1", "scope": "api:monitors:read", "n": fs.counter, "pad": strings.Repeat("x", fs.accessPad)}),
 		"token_type":    "Bearer",
 		"expires_in":    900,
 		"refresh_token": fs.refresh,
@@ -216,7 +217,7 @@ func (fs *fakeOAuthServer) revoke(w http.ResponseWriter, r *http.Request) {
 	if status == 0 {
 		status = http.StatusOK
 	}
-	if status == http.StatusOK {
+	if status == http.StatusOK && r.PostForm.Get("token") == fs.refresh {
 		fs.refresh = ""
 	}
 	fs.mu.Unlock()
@@ -712,5 +713,27 @@ func TestLoginLockFailureSendsNothing(t *testing.T) {
 	}
 	if got := fs.stats().requests; got != 0 {
 		t.Errorf("server saw %d requests, want 0", got)
+	}
+}
+
+// A refresh token the server has issued but the keyring cannot hold is revoked, and the login fails.
+func TestLoginFailsCleanlyWhenCredentialsDoNotFit(t *testing.T) {
+	fs := newFakeOAuthServer(t)
+	st := &memStore{setHook: func(_, v string) error {
+		if strings.Contains(v, "refresh_token") || strings.Contains(v, `"r":`) {
+			return fmt.Errorf("the system keyring refused the entry: %w", ErrEntryTooBig)
+		}
+		return nil
+	}}
+	m := testManager(t, fs, st)
+	_, err := m.Login(context.Background(), LoginOptions{OpenBrowser: browserFor(t, fs), Timeout: 10 * time.Second})
+	if err == nil || !strings.Contains(err.Error(), "too large") || clierr.ExitCode(err) != clierr.Auth {
+		t.Fatalf("err = %v, exit %d, want a clear auth error naming the size", err, clierr.ExitCode(err))
+	}
+	if got := fs.stats().revokes; got != 1 {
+		t.Errorf("revokes = %d, want 1 for the refresh token that cannot be kept", got)
+	}
+	if c, err := loadCredentials(st, m.Origin); err == nil && c.RefreshToken != "" {
+		t.Error("a half-saved sign-in is in the keyring")
 	}
 }

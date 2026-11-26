@@ -24,6 +24,10 @@ var ErrNotFound = errors.New("no stored sign-in")
 // ErrNoKeyring means the system keyring cannot be used. There is deliberately no file fallback.
 var ErrNoKeyring = errors.New("no system keyring is available")
 
+// ErrEntryTooBig means the system keyring refuses an entry of this size (macOS: about 1.9 KB of
+// secret, Windows: 2560 bytes).
+var ErrEntryTooBig = errors.New("the entry is too large for the system keyring")
+
 // Store keeps the secrets of a sign-in. The only production implementation is Keyring.
 type Store interface {
 	Get(key string) (string, error) // ErrNotFound when absent; errors wrapping ErrNoKeyring when unusable
@@ -57,7 +61,7 @@ func (Keyring) Get(key string) (string, error) {
 func (Keyring) Set(key, value string) error {
 	err := keyring.Set(KeyringService, key, value)
 	if errors.Is(err, keyring.ErrSetDataTooBig) {
-		return fmt.Errorf("the system keyring refused the entry: %w", err)
+		return fmt.Errorf("the system keyring refused the entry: %w: %w", ErrEntryTooBig, err)
 	}
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrNoKeyring, err)
@@ -74,7 +78,8 @@ func (Keyring) Delete(key string) error {
 }
 
 // Credentials is the sign-in of one host: the registered device and, after a finished sign-in,
-// the refresh token with its scopes and times.
+// the refresh token with its scopes and times. Nothing else is stored: the record has to fit into
+// a keyring entry (macOS: about 1.9 KB), and with every scope it needs about 1.2 KB.
 type Credentials struct {
 	ClientID       string    `json:"client_id"`
 	RegisteredAt   time.Time `json:"registered_at"`
@@ -85,8 +90,9 @@ type Credentials struct {
 	RefreshedAt    time.Time `json:"refreshed_at,omitzero"`
 }
 
-// Access is the current access token of one host. It is a separate entry because Windows limits
-// a credential to 2560 bytes and macOS the security command to 4096 bytes.
+// Access is the current access token of one host. It is a separate entry because the keyring
+// limits an entry (Windows 2560 bytes, macOS about 1.9 KB of secret): a long access token must not
+// cost the refresh token its place. When it does not fit, it is held in the process only.
 type Access struct {
 	Token     string    `json:"access_token"`
 	ExpiresAt time.Time `json:"expires_at"`

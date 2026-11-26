@@ -470,3 +470,65 @@ func TestLogoutNotSignedIn(t *testing.T) {
 		t.Errorf("server saw %d requests, want 0", n)
 	}
 }
+
+// renewWithTokenSize renews once with an access token of about n bytes in a keyring that holds at most limit.
+func renewWithTokenSize(t *testing.T, n, limit int) (st *memStore, m *Manager, fs *fakeOAuthServer, warn *bytes.Buffer, tok string) {
+	t.Helper()
+	fs = newFakeOAuthServer(t)
+	fs.accessPad = n * 3 / 4 // base64 of the payload is a third longer than the payload
+	st = limitedKeyring(limit)
+	now := time.Now()
+	m, _ = signedIn(t, fs, st, now, now.Add(-time.Minute)) // access token expired: the next call renews
+	warn = &bytes.Buffer{}
+	m.Warn = warn
+	tok, err := m.Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st, m, fs, warn, tok
+}
+
+func TestAccessTokenOf1200BytesFitsTheKeyring(t *testing.T) {
+	for name, limit := range map[string]int{"macOS": macKeyringLimit, "Windows": winKeyringLimit} {
+		st, m, _, warn, tok := renewWithTokenSize(t, 1200, limit)
+		if len(tok) < 1200 {
+			t.Fatalf("test token has %d bytes", len(tok))
+		}
+		if a, err := loadAccess(st, m.Origin); err != nil || a.Token != tok {
+			t.Errorf("%s: access token not in the keyring: %v", name, err)
+		}
+		if warn.Len() != 0 {
+			t.Errorf("%s: warning for a token that fits: %q", name, warn)
+		}
+	}
+}
+
+func TestAccessTokenOf3000BytesStaysInTheProcess(t *testing.T) {
+	_, m, fs, warn, tok := renewWithTokenSize(t, 3000, macKeyringLimit)
+	if len(tok) < 3000 {
+		t.Fatalf("test token has %d bytes", len(tok))
+	}
+	if _, err := loadAccess(m.Store, m.Origin); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the access token reached the keyring: %v", err)
+	}
+	// More calls in the same command: no new renewal, no second hint.
+	for i := 0; i < 3; i++ {
+		got, err := m.Token(context.Background())
+		if err != nil || got != tok {
+			t.Fatalf("Token #%d = %q, %v, want the held token", i, got, err)
+		}
+	}
+	if n := fs.stats().refreshes; n != 1 {
+		t.Errorf("server saw %d renewals, want 1", n)
+	}
+	if got := strings.Count(warn.String(), "\n"); got != 1 {
+		t.Errorf("hints = %d (%q), want exactly one", got, warn)
+	}
+	if strings.Contains(warn.String(), tok) || strings.Contains(warn.String(), "eyJ") {
+		t.Errorf("the hint contains token text: %q", warn)
+	}
+	// The durable credentials were saved: a new process renews with the new refresh token.
+	if c := mustCredentials(t, m.Store, m.Origin); c.RefreshToken == seedCredentials(time.Now()).RefreshToken {
+		t.Error("the rotated refresh token was not stored")
+	}
+}

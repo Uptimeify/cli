@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -25,6 +26,25 @@ type memStore struct {
 	m      map[string]string
 	getErr error // returned by Get when set
 	setErr error // returned by Set when set
+	// setHook sees every Set first; a non-nil error refuses the entry (a keyring with a size limit).
+	setHook func(key, value string) error
+}
+
+// Size limits of the real keyrings: macOS stops at about 1.9 KB of secret (4096 hex characters
+// for /usr/bin/security), Windows at 2560 bytes.
+const (
+	macKeyringLimit = 1900
+	winKeyringLimit = 2560
+)
+
+// limitedKeyring is a store that refuses a value above max bytes, like the real platforms.
+func limitedKeyring(max int) *memStore {
+	return &memStore{setHook: func(_, v string) error {
+		if len(v) > max {
+			return fmt.Errorf("the system keyring refused the entry: %w", ErrEntryTooBig)
+		}
+		return nil
+	}}
 }
 
 var _ Store = (*memStore)(nil)
@@ -47,6 +67,11 @@ func (s *memStore) Set(key, value string) error {
 	defer s.mu.Unlock()
 	if s.setErr != nil {
 		return s.setErr
+	}
+	if s.setHook != nil {
+		if err := s.setHook(key, value); err != nil {
+			return err
+		}
 	}
 	if s.m == nil {
 		s.m = map[string]string{}
@@ -159,7 +184,7 @@ func TestKeyringMapsErrors(t *testing.T) {
 
 	keyring.MockInitWithError(keyring.ErrSetDataTooBig)
 	err := k.Set("k", "v")
-	if !errors.Is(err, keyring.ErrSetDataTooBig) || errors.Is(err, ErrNoKeyring) || !strings.Contains(err.Error(), "refused") {
+	if !errors.Is(err, keyring.ErrSetDataTooBig) || !errors.Is(err, ErrEntryTooBig) || errors.Is(err, ErrNoKeyring) || !strings.Contains(err.Error(), "refused") {
 		t.Errorf("Set too big: err = %v", err)
 	}
 	keyring.MockInit()
@@ -360,5 +385,29 @@ func TestFileStore(t *testing.T) {
 	}
 	if err := st.Delete("k"); err != nil {
 		t.Errorf("delete missing: %v", err)
+	}
+}
+
+func TestStoredCredentialsStaySmall(t *testing.T) {
+	st := &memStore{}
+	all := AllScopes
+	c := &Credentials{
+		ClientID: "ucli_" + strings.Repeat("c", 32), RegisteredAt: time.Now(), DeviceName: "uptimeify CLI on " + strings.Repeat("h", 40),
+		RefreshToken: strings.Repeat("r", 128), Scope: "offline_access " + strings.Join(all, " "),
+		GrantStartedAt: time.Now(), RefreshedAt: time.Now(),
+	}
+	if err := saveCredentials(st, "https://uptimeify.io", c); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := st.Get("https://uptimeify.io")
+	if len(raw) > 1400 {
+		t.Errorf("stored record is %d bytes, want at most 1400 with every scope (macOS limit %d)", len(raw), macKeyringLimit)
+	}
+	got, err := loadCredentials(st, "https://uptimeify.io")
+	if err != nil || got.RefreshToken != c.RefreshToken || got.ClientID != c.ClientID || got.DeviceName != c.DeviceName {
+		t.Fatalf("round trip: %+v, %v", got, err)
+	}
+	if got.Scope != c.Scope {
+		t.Errorf("scope changed in the round trip")
 	}
 }
