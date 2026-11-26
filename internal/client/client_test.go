@@ -3,10 +3,14 @@ package client
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -370,5 +374,317 @@ func TestSuccessBodyNotAltered(t *testing.T) {
 	res, err := c.Do(context.Background(), "GET", "/api/websites", nil, nil)
 	if err != nil || string(res.Body) != `{"note":"wsm_secret"}` {
 		t.Errorf("res = %+v, err = %v", res, err)
+	}
+}
+
+// fakeSource is a TokenSource for tests. tokens[0] is handed out first, tokens[1] after a renewal.
+type fakeSource struct {
+	mu         sync.Mutex
+	tokens     []string
+	tokenErr   error
+	renewErr   error
+	tokenCalls int
+	renewCalls int
+	rejected   []string
+}
+
+// newFakeSource builds the tokens at run time; they are short and do not look like secrets.
+func newFakeSource() *fakeSource {
+	return &fakeSource{tokens: []string{"t" + "1", "t" + "2"}}
+}
+
+func (f *fakeSource) Token(ctx context.Context) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tokenCalls++
+	if f.tokenErr != nil {
+		return "", f.tokenErr
+	}
+	return f.tokens[0], nil
+}
+
+func (f *fakeSource) Renew(ctx context.Context, rejected string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.renewCalls++
+	f.rejected = append(f.rejected, rejected)
+	if f.renewErr != nil {
+		return "", f.renewErr
+	}
+	return f.tokens[1], nil
+}
+
+func newSourceTest(t *testing.T, h http.HandlerFunc, src TokenSource) *Client {
+	t.Helper()
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	c, err := New(Options{BaseURL: srv.URL, Source: src, Version: "test", AllowInsecureLoopback: true, Sleep: func(time.Duration) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// rejectInvalidToken answers like the server's /api middleware for an expired or revoked JWT.
+func rejectInvalidToken(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+	w.WriteHeader(http.StatusUnauthorized)
+	w.Write([]byte(`{"statusCode":401,"message":"Unauthorized","data":{"code":"unauthorized"}}`))
+}
+
+const wantSignInHint = "the sign-in was not accepted: run `uptimeify auth login`"
+
+func TestBaseURL(t *testing.T) {
+	u, err := BaseURL("https://uptimeify.io/", false)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if u.Path != "" || u.String() != "https://uptimeify.io" {
+		t.Errorf("path %q, string %q", u.Path, u.String())
+	}
+	if _, err := BaseURL("http://example.com", true); clierr.ExitCode(err) != clierr.Usage {
+		t.Errorf("http to a non-loopback host: err = %v", err)
+	}
+}
+
+func TestUserAgent(t *testing.T) {
+	if ua := UserAgent("1.2.3"); !strings.HasPrefix(ua, "uptimeify-cli/1.2.3 (") {
+		t.Errorf("user agent = %q", ua)
+	}
+}
+
+func TestNewWithoutTokenOrSource(t *testing.T) {
+	_, err := New(Options{BaseURL: "https://uptimeify.io"})
+	if err == nil || clierr.ExitCode(err) != clierr.Auth {
+		t.Fatalf("err = %v", err)
+	}
+	for _, want := range []string{"uptimeify auth login", "UPTIMEIFY_TOKEN"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+}
+
+func TestSourceRenewsOnceOnInvalidToken(t *testing.T) {
+	src := newFakeSource()
+	var mu sync.Mutex
+	var seen []string
+	c := newSourceTest(t, func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		mu.Lock()
+		seen = append(seen, auth)
+		mu.Unlock()
+		if auth == "Bearer "+src.tokens[1] {
+			w.Write([]byte(`{}`))
+			return
+		}
+		rejectInvalidToken(w)
+	}, src)
+	res, err := c.Do(context.Background(), "GET", "/api/websites", nil, nil)
+	if err != nil || res.Status != 200 {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
+	if src.renewCalls != 1 || len(src.rejected) != 1 || src.rejected[0] != src.tokens[0] {
+		t.Errorf("renew calls %d, rejected %v", src.renewCalls, src.rejected)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []string{"Bearer " + src.tokens[0], "Bearer " + src.tokens[1]}; !reflect.DeepEqual(seen, want) {
+		t.Errorf("server saw %v, want %v", seen, want)
+	}
+}
+
+func TestSourceRenewsOnlyOnce(t *testing.T) {
+	src := newFakeSource()
+	var hits atomic.Int32
+	c := newSourceTest(t, func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		rejectInvalidToken(w)
+	}, src)
+	_, err := c.Do(context.Background(), "GET", "/api/websites", nil, nil)
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.Status != 401 {
+		t.Fatalf("err = %v", err)
+	}
+	if src.renewCalls != 1 || hits.Load() != 2 {
+		t.Errorf("renew calls %d, server hits %d", src.renewCalls, hits.Load())
+	}
+	if ae.Hint != wantSignInHint {
+		t.Errorf("hint = %q", ae.Hint)
+	}
+	if ae.ExitCode() != clierr.Auth {
+		t.Errorf("exit = %d", ae.ExitCode())
+	}
+}
+
+func TestNoRenewWithoutInvalidTokenHeader(t *testing.T) {
+	src := newFakeSource()
+	c := newSourceTest(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"message":"Unauthorized","data":{"code":"unauthorized"}}`))
+	}, src)
+	_, err := c.Do(context.Background(), "GET", "/api/websites", nil, nil)
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.Status != 401 {
+		t.Fatalf("err = %v", err)
+	}
+	if src.renewCalls != 0 {
+		t.Errorf("renew calls = %d, want 0", src.renewCalls)
+	}
+	if ae.Hint != wantSignInHint {
+		t.Errorf("hint = %q", ae.Hint)
+	}
+}
+
+func TestStaticTokenNeverRenews(t *testing.T) {
+	var hits atomic.Int32
+	c, _ := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		rejectInvalidToken(w)
+	}, nil)
+	_, err := c.Do(context.Background(), "GET", "/api/websites", nil, nil)
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.Status != 401 {
+		t.Fatalf("err = %v", err)
+	}
+	if ae.Hint != "" {
+		t.Errorf("hint = %q, want empty for an API token", ae.Hint)
+	}
+	if hits.Load() != 1 {
+		t.Errorf("server hits = %d, want 1", hits.Load())
+	}
+}
+
+func TestRenewErrorEndsRequest(t *testing.T) {
+	src := newFakeSource()
+	ended := clierr.New(clierr.Auth, "ended")
+	src.renewErr = ended
+	var hits atomic.Int32
+	c := newSourceTest(t, func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		rejectInvalidToken(w)
+	}, src)
+	_, err := c.Do(context.Background(), "GET", "/api/websites", nil, nil)
+	if !errors.Is(err, ended) {
+		t.Fatalf("err = %v, want the error from Renew", err)
+	}
+	if clierr.ExitCode(err) != clierr.Auth {
+		t.Errorf("exit = %d", clierr.ExitCode(err))
+	}
+	if hits.Load() != 1 {
+		t.Errorf("server hits = %d, want 1", hits.Load())
+	}
+}
+
+func TestSourceTokenErrorEndsRequest(t *testing.T) {
+	src := newFakeSource()
+	failed := clierr.New(clierr.Auth, "no token")
+	src.tokenErr = failed
+	var hits atomic.Int32
+	c := newSourceTest(t, func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }, src)
+	_, err := c.Do(context.Background(), "GET", "/api/websites", nil, nil)
+	if !errors.Is(err, failed) {
+		t.Fatalf("err = %v, want the error from Token", err)
+	}
+	if hits.Load() != 0 {
+		t.Errorf("server hits = %d, want 0", hits.Load())
+	}
+}
+
+func TestRenewedRequestKeepsBody(t *testing.T) {
+	src := newFakeSource()
+	var mu sync.Mutex
+	var bodies []string
+	c := newSourceTest(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		mu.Unlock()
+		if r.Header.Get("Authorization") == "Bearer "+src.tokens[1] {
+			w.Write([]byte(`{}`))
+			return
+		}
+		rejectInvalidToken(w)
+	}, src)
+	if _, err := c.Do(context.Background(), "POST", "/api/websites", nil, []byte(`{"a":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []string{`{"a":1}`, `{"a":1}`}; !reflect.DeepEqual(bodies, want) {
+		t.Errorf("bodies = %q", bodies)
+	}
+}
+
+func TestRedactsSourceTokens(t *testing.T) {
+	src := newFakeSource()
+	c := newSourceTest(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+src.tokens[1] {
+			rejectInvalidToken(w)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		body, _ := json.Marshal(map[string]any{
+			"message": "first " + src.tokens[0] + " then " + src.tokens[1],
+			"data":    map[string]string{"code": "c " + src.tokens[1]},
+		})
+		w.Write(body)
+	}, src)
+	_, err := c.Do(context.Background(), "GET", "/api/websites", nil, nil)
+	var ae *APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("err = %v", err)
+	}
+	for _, s := range []string{ae.Message, ae.Code, err.Error()} {
+		for _, tok := range src.tokens {
+			if strings.Contains(s, tok) {
+				t.Errorf("token %q leaked in %q", tok, s)
+			}
+		}
+	}
+	if !strings.Contains(ae.Message, "[redacted]") {
+		t.Errorf("message = %q", ae.Message)
+	}
+}
+
+func TestRequiredScopeAndHint(t *testing.T) {
+	cases := []struct {
+		code, scope, wantScope, wantHint string
+	}{
+		{"cliScopeForbidden", "api:monitors:write", "api:monitors:write",
+			"this sign-in lacks the scope api:monitors:write: run `uptimeify auth login --scope api:monitors:write` and grant it in the browser"},
+		{"paidQuotaUpgradeNotAuthorized", "api:billing:write", "api:billing:write",
+			"this sign-in lacks the scope api:billing:write: run `uptimeify auth login --scope api:billing:write` and grant it in the browser"},
+		{"paidQuotaUpgradeNotAuthorized", "", "", ""},
+		{"cliScopeForbidden", "api:x:read; rm -rf /", "", ""},
+		{"cliPathForbidden", "", "",
+			"browser sign-ins cannot use this operation: use the dashboard, or an API token in UPTIMEIFY_TOKEN if the token's permissions allow it"},
+		{"cliPathAmbiguous", "", "",
+			"the server refuses paths with encoded slashes, dots, percent signs or double slashes for browser sign-ins: check the arguments"},
+	}
+	for _, tc := range cases {
+		c, _ := newTest(t, func(w http.ResponseWriter, r *http.Request) {
+			data := map[string]string{"code": tc.code}
+			if tc.scope != "" {
+				data["requiredScope"] = tc.scope
+			}
+			body, _ := json.Marshal(map[string]any{"statusCode": 403, "message": "denied", "data": data})
+			w.WriteHeader(http.StatusForbidden)
+			w.Write(body)
+		}, nil)
+		_, err := c.Do(context.Background(), "GET", "/api/websites", nil, nil)
+		var ae *APIError
+		if !errors.As(err, &ae) {
+			t.Fatalf("%s: err = %v", tc.code, err)
+		}
+		if ae.RequiredScope != tc.wantScope {
+			t.Errorf("%s %q: required scope = %q, want %q", tc.code, tc.scope, ae.RequiredScope, tc.wantScope)
+		}
+		if ae.Hint != tc.wantHint {
+			t.Errorf("%s %q: hint = %q, want %q", tc.code, tc.scope, ae.Hint, tc.wantHint)
+		}
+		if tc.code == "cliPathAmbiguous" && strings.Contains(ae.Hint, "UPTIMEIFY_TOKEN") {
+			t.Errorf("cliPathAmbiguous hint points to UPTIMEIFY_TOKEN: %q", ae.Hint)
+		}
 	}
 }
