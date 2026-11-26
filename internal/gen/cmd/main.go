@@ -1,6 +1,6 @@
 // Command gen writes the command manifest. Usage:
 //
-//	gen -spec spec/openapi.json -overrides internal/gen/overrides.json -out internal/commands/ops.json
+//	gen -spec spec/openapi.json -overrides internal/gen/overrides.json -confirm internal/gen/confirm.json -out internal/commands/ops.json
 //	gen -check-breaking old-ops.json new-ops.json
 package main
 
@@ -32,6 +32,7 @@ func fail(err error) {
 func main() {
 	spec := flag.String("spec", "spec/openapi.json", "OpenAPI document")
 	overridesPath := flag.String("overrides", "internal/gen/overrides.json", "name overrides")
+	confirmPath := flag.String("confirm", "internal/gen/confirm.json", "non-DELETE operations that need confirmation")
 	out := flag.String("out", "internal/commands/ops.json", "manifest to write")
 	breaking := flag.Bool("check-breaking", false, "compare two manifests: <old> <new>")
 	flag.Parse()
@@ -62,7 +63,17 @@ func main() {
 	default:
 		fail(err)
 	}
-	ops, err := gen.Build(raw, overrides)
+	var confirm []string
+	cb, err := os.ReadFile(*confirmPath)
+	switch {
+	case err == nil:
+		fail(json.Unmarshal(cb, &confirm))
+	case errors.Is(err, os.ErrNotExist) && *confirmPath == "internal/gen/confirm.json":
+		// default file absent: only DELETE asks
+	default:
+		fail(err)
+	}
+	ops, err := gen.Build(raw, overrides, confirm)
 	fail(err)
 	b, err := json.MarshalIndent(ops, "", " ")
 	fail(err)

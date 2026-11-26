@@ -84,7 +84,7 @@ func Register(root *cobra.Command, ops []gen.Op, d Deps) {
 			cmd.Flags().String("body", "", "JSON request body: a file path, or - for standard input")
 			cmd.Flags().StringArray("field", nil, "body field, repeatable: key=value sends a string, key:=json sends parsed JSON (numbers, booleans, objects)")
 		}
-		if op.Method == "DELETE" {
+		if op.Confirm {
 			cmd.Flags().Bool("yes", false, "do not ask for confirmation")
 		}
 		cmd.RunE = func(c *cobra.Command, args []string) error { return execute(c, args, op, d) }

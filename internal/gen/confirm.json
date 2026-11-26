@@ -1,0 +1,11 @@
+[
+ "POST /api/customers/bulk",
+ "POST /api/im/incidents/bulk",
+ "POST /api/im/incidents/{id}/merge",
+ "POST /api/im/sources/{id}/disable-auth",
+ "POST /api/im/sources/{id}/rotate-bearer-token",
+ "POST /api/im/sources/{id}/rotate-token",
+ "POST /api/status-pages/maintenances/{id}/cancel",
+ "POST /api/users/{id}/mfa/reset",
+ "POST /api/websites/{id}/heartbeat-token/rotate"
+]
