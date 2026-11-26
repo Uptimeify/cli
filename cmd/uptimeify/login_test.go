@@ -168,6 +168,40 @@ func TestLoginCommandNoBrowser(t *testing.T) {
 	if strings.Contains(errOut, "UPTIMEIFY_TOKEN is set") {
 		t.Errorf("note printed without UPTIMEIFY_TOKEN: %q", errOut)
 	}
+	if first, _, _ := strings.Cut(errOut, "\n"); first != "Signing in at "+ls.srv.URL {
+		t.Errorf("first stderr line = %q, want the host being signed in to", first)
+	}
+}
+
+// Browser sign-in only works at the main host (and the loopback of an acceptance run).
+func TestLoginRefusesOtherHosts(t *testing.T) {
+	ls := newLoginServer(t)
+	for _, raw := range []string{"https://status.example.com", "https://uptimeify.io.evil.example", "https://app.uptimeify.io", "https://uptimeify.io:8443"} {
+		sys := testSystem(t)
+		var out, errOut bytes.Buffer
+		no := func() bool { return false }
+		env := map[string]string{"UPTIMEIFY_API_URL": raw}
+		root := newRoot(func(k string) string { return env[k] }, &out, &errOut, strings.NewReader(""), no, no, sys)
+		root.SetArgs([]string{"auth", "login", "--no-browser"})
+		err := root.Execute()
+		if clierr.ExitCode(err) != clierr.Usage || err == nil || !strings.Contains(err.Error(), "UPTIMEIFY_TOKEN") || !strings.Contains(err.Error(), "uptimeify.io") {
+			t.Errorf("%s: err = %v, exit %d, want exit 2 pointing at UPTIMEIFY_TOKEN", raw, err, clierr.ExitCode(err))
+		}
+		if errOut.Len() != 0 || sys.store.(*memStore).count() != 0 {
+			t.Errorf("%s: stderr %q or keyring touched", raw, errOut.String())
+		}
+	}
+	if ls.hits.Load() != 0 {
+		t.Error("a request reached the server")
+	}
+	// Loopback needs the switch, and only 127.0.0.1 counts.
+	for _, raw := range []string{"http://localhost:3001", "https://127.0.0.1:3001"} {
+		env := map[string]string{"UPTIMEIFY_API_URL": raw, "UPTIMEIFY_ALLOW_INSECURE_LOOPBACK": "1"}
+		_, _, err := runCLI(t, env, "auth", "login", "--no-browser")
+		if clierr.ExitCode(err) != clierr.Usage {
+			t.Errorf("%s: err = %v, want exit 2", raw, err)
+		}
+	}
 }
 
 func TestLoginCommandUnknownScope(t *testing.T) {

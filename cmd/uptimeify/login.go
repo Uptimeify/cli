@@ -13,7 +13,8 @@ import (
 )
 
 func loginLong() string {
-	return "Sign in with the browser (OAuth with PKCE). The CLI prints the address on stderr and opens\n" +
+	return "Sign in with the browser (OAuth with PKCE). This works only at https://uptimeify.io; for any other\n" +
+		"host keep using an API token (UPTIMEIFY_TOKEN). The CLI prints the address on stderr and opens\n" +
 		"it in your browser. The browser must run on this computer: it returns to http://127.0.0.1 on a\n" +
 		"random port.\n\n" +
 		"The sign-in is kept in the system keyring (macOS Keychain, Windows Credential Manager, Secret\n" +
@@ -48,6 +49,11 @@ func newLoginCmd(env func(string) string, out, errOut io.Writer, sys system) *co
 			if err != nil {
 				return err
 			}
+			if err := auth.CheckLoginOrigin(m.Origin, env("UPTIMEIFY_ALLOW_INSECURE_LOOPBACK") == "1"); err != nil {
+				return err
+			}
+			// First line on stderr, before anything is registered or opened: where this sign-in goes.
+			fmt.Fprintf(errOut, "Signing in at %s\n", m.Origin)
 			all := append([]string(nil), scopes...)
 			if write {
 				all = append(all, auth.WriteScopes()...)

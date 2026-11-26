@@ -145,3 +145,32 @@ func TestValidateDeviceName(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckLoginOrigin(t *testing.T) {
+	cases := []struct {
+		origin   string
+		loopback bool
+		ok       bool
+	}{
+		{"https://uptimeify.io", false, true},
+		{"https://uptimeify.io", true, true},
+		{"http://127.0.0.1:3047", true, true},
+		{"http://127.0.0.1", true, true},
+		{"http://127.0.0.1:3047", false, false},
+		{"http://localhost:3047", true, false},
+		{"https://127.0.0.1:3047", true, false},
+		{"https://status.example.com", true, false},
+		{"https://uptimeify.io:8443", false, false},
+		{"https://uptimeify.io.evil.example", false, false},
+		{"http://uptimeify.io", true, false},
+	}
+	for _, c := range cases {
+		err := CheckLoginOrigin(c.origin, c.loopback)
+		if (err == nil) != c.ok {
+			t.Errorf("CheckLoginOrigin(%q, %v) = %v, want ok=%v", c.origin, c.loopback, err, c.ok)
+		}
+		if err != nil && clierr.ExitCode(err) != clierr.Usage {
+			t.Errorf("%q: exit %d, want 2", c.origin, clierr.ExitCode(err))
+		}
+	}
+}

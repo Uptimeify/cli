@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/uptimeify/cli/internal/clierr"
+	"github.com/uptimeify/cli/internal/sanitize"
 )
 
 // AllScopes mirrors CLI_API_SCOPES in monitoring-app/shared/utils/cli-api-scopes.ts, same order.
@@ -92,4 +93,25 @@ func RequestScopes(extra []string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// LoginOrigin is the only host the browser sign-in works for. It is a constant on purpose: no flag
+// and no environment variable can add a host, because an injected UPTIMEIFY_API_URL would
+// otherwise open an attacker's page as "Uptimeify login". Other hosts keep UPTIMEIFY_TOKEN.
+const LoginOrigin = "https://uptimeify.io"
+
+// CheckLoginOrigin refuses the browser sign-in for every origin except LoginOrigin and, with the
+// loopback switch of an acceptance run, http://127.0.0.1 on any port.
+func CheckLoginOrigin(origin string, allowLoopback bool) error {
+	if origin == LoginOrigin {
+		return nil
+	}
+	if allowLoopback {
+		if rest, ok := strings.CutPrefix(origin, "http://127.0.0.1"); ok {
+			if _, port, ok := strings.Cut(rest, ":"); rest == "" || (ok && port != "" && strings.Trim(port, "0123456789") == "") {
+				return nil
+			}
+		}
+	}
+	return clierr.New(clierr.Usage, "the browser sign-in only works at %s, not at %s. For other hosts keep using an API token: set UPTIMEIFY_TOKEN", LoginOrigin, sanitize.Line(origin))
 }
