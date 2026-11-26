@@ -778,3 +778,37 @@ func TestLoginRevokesSignInOfOtherProcess(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusStripsControlCharacters(t *testing.T) {
+	st := &memStore{}
+	m := &Manager{Origin: "https://uptimeify.io", Store: st}
+	c := seedCredentials(time.Now())
+	c.DeviceName = "dev\x1b[31mice\u202e"
+	c.Scope = "offline_access api:monitors:read\x07\x1b]0;x"
+	if err := saveCredentials(st, m.Origin, c); err != nil {
+		t.Fatal(err)
+	}
+	s, err := m.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{s.DeviceName, s.Scope} {
+		if strings.ContainsAny(v, "\x1b\x07\u202e") {
+			t.Errorf("status text still has control characters: %q", v)
+		}
+	}
+}
+
+func TestLoginStoresScopeWithoutControlCharacters(t *testing.T) {
+	fs := newFakeOAuthServer(t)
+	fs.tokenScope = "offline_access api:monitors:read\x1b[2J"
+	st := &memStore{}
+	m := testManager(t, fs, st)
+	cred, err := m.Login(context.Background(), LoginOptions{OpenBrowser: browserFor(t, fs), Timeout: 10 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsRune(cred.Scope, 0x1b) || strings.ContainsRune(mustCredentials(t, st, m.Origin).Scope, 0x1b) {
+		t.Errorf("scope = %q", cred.Scope)
+	}
+}

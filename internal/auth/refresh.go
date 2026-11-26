@@ -7,6 +7,7 @@ import (
 
 	"github.com/uptimeify/cli/internal/client"
 	"github.com/uptimeify/cli/internal/clierr"
+	"github.com/uptimeify/cli/internal/sanitize"
 )
 
 // refreshTimeout bounds the token request of a renewal, which does not follow the command's context.
@@ -106,7 +107,7 @@ func (m *Manager) refresh(ctx context.Context, rejected string) (string, error) 
 	cred.RefreshToken = tr.RefreshToken
 	cred.RefreshedAt = now
 	if tr.Scope != "" {
-		cred.Scope = tr.Scope
+		cred.Scope = sanitize.Line(tr.Scope)
 	}
 	// The rotated refresh token is stored first: without it the sign-in is lost, without the
 	// access token the next command only renews once more.

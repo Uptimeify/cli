@@ -223,7 +223,7 @@ func (m *Manager) Login(ctx context.Context, o LoginOptions) (*Credentials, erro
 
 	now = m.now()
 	cred.RefreshToken = tr.RefreshToken
-	cred.Scope = tr.Scope
+	cred.Scope = sanitize.Line(tr.Scope)
 	if cred.Scope == "" {
 		_, cred.Scope = jwtClaims(tr.AccessToken)
 	}
@@ -296,8 +296,8 @@ func (m *Manager) Status() (*Status, error) {
 	}
 	s := &Status{
 		SignedIn:       true,
-		DeviceName:     cred.DeviceName,
-		Scope:          cred.Scope,
+		DeviceName:     sanitize.Line(cred.DeviceName),
+		Scope:          sanitize.Line(cred.Scope),
 		GrantStartedAt: cred.GrantStartedAt,
 		RefreshedAt:    cred.RefreshedAt,
 	}

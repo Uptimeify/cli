@@ -481,3 +481,24 @@ func TestRetryAfterIsCappedAndIgnoresBadValues(t *testing.T) {
 		}
 	}
 }
+
+// A 3xx answer is an error and is never followed, so no secret can be sent to the Location.
+func TestRegisterAndRevokeDoNotFollowRedirects(t *testing.T) {
+	var hits atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer target.Close()
+	for _, status := range []int{http.StatusMovedPermanently, http.StatusFound, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		o, _ := oauthFixture(t, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL+"/steal", status)
+		})
+		if _, err := o.Register(context.Background(), "dev"); err == nil || !strings.Contains(err.Error(), "redirect") {
+			t.Errorf("Register after %d: err = %v, want a redirect error", status, err)
+		}
+		if err := o.Revoke(context.Background(), "ucli_"+strings.Repeat("a", 8), "rt-1"); err == nil || !strings.Contains(err.Error(), "redirect") {
+			t.Errorf("Revoke after %d: err = %v, want a redirect error", status, err)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Errorf("the redirect target was called %d times", hits.Load())
+	}
+}
