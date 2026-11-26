@@ -81,7 +81,7 @@ The full list of checks, including the image, is in [RELEASING.md](RELEASING.md)
 
 ## Usage
 
-    export UPTIMEIFY_TOKEN=...        # an API token from Settings, API Tokens
+    uptimeify auth login              # signs in with the browser, see "Signing in"
     uptimeify doctor
     uptimeify auth status
     uptimeify websites list
@@ -113,11 +113,70 @@ bulk actions, merging incidents, cancelling a maintenance) ask for confirmation 
 only when stdin is a terminal. Without a terminal, scripts must pass `--yes`; without it the
 command exits with code 2 and sends nothing.
 
+## Signing in
+
+    uptimeify auth login
+
+`auth login` opens your browser on the Uptimeify consent page and prints the same address on
+stderr. After you agree, the browser returns to the CLI on `http://127.0.0.1` (a random port that
+only this computer can reach), and the CLI keeps the sign-in in the system keyring: the macOS
+Keychain, the Windows Credential Manager, or the Secret Service on Linux (for example GNOME
+Keyring or KWallet). With `--no-browser` the CLI opens nothing and only prints the address. Open it
+in a browser on the same computer.
+
+Over SSH the browser runs on another machine and cannot reach `127.0.0.1` of the machine with the
+CLI. Forward the port shown in the address (for example with a second session
+`ssh -L <port>:127.0.0.1:<port> <host>`), or use an API token.
+
+By default the CLI asks for read access only: the `:read` scopes of every area except users,
+billing, audit and status page subscribers. `--write` adds the `:write` scopes of the same areas.
+`--scope <scope>` adds single scopes and can be repeated. It also covers the separate ones
+(`api:users:read`, `api:users:write`, `api:billing:read`, `api:billing:write`, `api:audit:read`,
+`api:statuspage-subscribers:read`). An unknown scope exits with code 2 and sends nothing:
+
+    uptimeify auth login --write
+    uptimeify auth login --scope api:billing:write
+
+`--device-name <name>` sets the name under which the device appears in Connected apps (1 to 64
+characters, no control characters). The default is `uptimeify CLI on <hostname>`.
+
+The consent page can grant fewer scopes than requested. `uptimeify auth login --help` lists every
+scope. When a command needs a scope that the sign-in lacks, the error says which one and how to add
+it.
+
+How long a sign-in lasts:
+
+- The access token is valid for 15 minutes. The CLI renews it on its own.
+- A sign-in that is not used for 7 days ends.
+- Every sign-in ends at the latest 30 days after `auth login`. Then run `auth login` again.
+- `uptimeify auth status` shows the device, user ID, organisation, scopes and both limits.
+
+`uptimeify auth logout` revokes the sign-in on the server and removes it from the keyring. You can
+also disconnect the device in the dashboard under Connected apps; the CLI notices on its next
+request. The device is listed there as `uptimeify CLI on <hostname>`.
+
+Each API host has its own sign-in. With another `UPTIMEIFY_API_URL`, run `auth login` again. A
+sign-in is never sent to another host.
+
+`UPTIMEIFY_TOKEN` takes precedence. While it is set, the CLI uses the API token and neither reads
+nor writes the keyring; `auth status` says so, and `auth login` stops and asks you to unset it.
+Servers, CI jobs and containers usually have no keyring. There `auth login` fails with an error, and
+`UPTIMEIFY_TOKEN` is the only way to sign in. The CLI never falls back to a file.
+
+The browser sign-in works only at the main host, `https://uptimeify.io`. The list is fixed in the
+program: no flag and no environment variable adds a host, because an injected `UPTIMEIFY_API_URL`
+would otherwise open an attacker's page as "Uptimeify login". Any other host makes `auth login` stop
+with exit code 2; there, and on customer domains and white-label hosts, keep using
+`UPTIMEIFY_TOKEN`. The one exception is `http://127.0.0.1:<port>` together with
+`UPTIMEIFY_ALLOW_INSECURE_LOOPBACK=1`, which is for acceptance runs. `auth login` names the host in
+the first line on stderr before it opens anything. `auth status` and `UPTIMEIFY_TOKEN` work at every
+host as before.
+
 ## Environment variables
 
 | Variable | Meaning |
 | --- | --- |
-| `UPTIMEIFY_TOKEN` | API token. Required for every command that calls the API. |
+| `UPTIMEIFY_TOKEN` | API token for CI and servers. Takes precedence over the browser sign-in. |
 | `UPTIMEIFY_API_URL` | API base URL. Default `https://uptimeify.io`. The token is sent to this host, so anyone who can set this variable for your shell or CI job receives your token. |
 | `UPTIMEIFY_ALLOW_INSECURE_LOOPBACK` | Set to `1` to allow plain `http://127.0.0.1`. Nothing else may use http. |
 | `UPTIMEIFY_DEBUG` | Set to `1` to print method, URL and status to stderr. Headers are never printed. |
@@ -148,6 +207,33 @@ What is implemented today:
 - Path arguments that are empty, `.`, `..` or contain `/` or `\` (also encoded) are rejected.
 - Request bodies are limited to 10 MB.
 - No telemetry and no self-update.
+- A browser sign-in (client ID, refresh token, access token) is kept only in the system keyring:
+  the macOS Keychain, the Windows Credential Manager, or the Secret Service on Linux. It is never
+  written to a file. Without a keyring there is no browser sign-in, only `UPTIMEIFY_TOKEN`.
+- The keyring protects the sign-in from other users of the computer and from plain text on disk. It
+  does not protect it from your own processes: on macOS the entries are created through
+  `/usr/bin/security`, and any process running as the same user can read them without a prompt.
+  Treat a computer where untrusted programs run as your user as unsafe for a browser sign-in.
+- A keyring entry has a size limit (about 1.9 KB on macOS, 2560 bytes on Windows). The access token
+  is a separate entry; if a long one does not fit, the CLI keeps it in memory for that command,
+  prints one note on stderr and renews it again with the next command. The record with the refresh
+  token must fit: if it does not, `auth login` fails with a clear message and ends the refresh token
+  it was given on the server.
+- No secret appears in the process list. There is no token flag. On macOS the keyring entry is
+  passed to `/usr/bin/security` on standard input, not as an argument. The browser is started
+  without a shell and receives only the sign-in address, which is useless without the PKCE
+  verifier that stays in the memory of the CLI.
+- The browser's answer is accepted only on `127.0.0.1`, only as one request to `/callback` with the
+  matching `state`, and only for 5 minutes. Every other request gets a 404.
+- Sign-in requests (device registration, token, revocation) never follow a redirect.
+- Refresh tokens are single use, and the server ends the whole sign-in when an old one comes back.
+  A lock file per host in the user cache directory makes sure only one CLI process renews at a
+  time. The lock file is empty. After a network failure in the middle of a renewal the CLI does not
+  retry with the old refresh token; it removes the sign-in and asks you to sign in again.
+- On Linux the keyring library opens its Secret Service session with the `plain` algorithm, so the
+  secret crosses your own D-Bus session bus (a local socket) unencrypted.
+- The device name contains the hostname of this computer. The admins of your organisation see it
+  under Connected apps and in the audit log.
 
 Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
@@ -176,6 +262,29 @@ deletes one tag. It refuses any host except `127.0.0.1` and `localhost`, unless
 
     UPTIMEIFY_API_URL=http://127.0.0.1:3001 UPTIMEIFY_ALLOW_INSECURE_LOOPBACK=1 \
       UPTIMEIFY_TOKEN=... scripts/acceptance.sh
+
+`scripts/acceptance-login.sh` checks the browser sign-in of the built binary (`make build`) against a
+non-production instance that has browser sign-in switched on. It runs `auth login --no-browser`
+and plays the browser over HTTP: it signs in with a dedicated account, confirms the password,
+grants consent (only the `api:` scopes) and calls the CLI's loopback receiver. The account must be
+an organization admin without a second factor. The script registers two devices (the server allows
+five registrations per hour per IP) and creates and deletes one tag.
+
+It writes to your real system keychain (service `uptimeify-cli`), but only to the entries named
+after the instance under test, `http://127.0.0.1:<port>` and `http://127.0.0.1:<port> access`, so it
+never touches the entries for `https://uptimeify.io`. It says so when it starts, signs out at the
+end (also on Ctrl-C) and checks that nothing is left. Every CLI call has a time limit; if a keychain
+dialog waits for a click, the run stops with a message. Only `http://127.0.0.1:<port>` is accepted.
+It never prints a token, an authorization code or the authorize address. Read the password without
+echo:
+
+    make build
+    read -rs UPTIMEIFY_ACCEPTANCE_PASSWORD && export UPTIMEIFY_ACCEPTANCE_PASSWORD
+    UPTIMEIFY_API_URL=http://127.0.0.1:3047 UPTIMEIFY_ALLOW_INSECURE_LOOPBACK=1 \
+      UPTIMEIFY_ACCEPTANCE_EMAIL=admin@example.test scripts/acceptance-login.sh
+
+In the Uptimeify monorepo, `make sandbox-cli-acceptance` builds this repository, starts a
+throwaway app with a throwaway account and runs the script against it.
 
 ## License
 
