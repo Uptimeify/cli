@@ -737,3 +737,44 @@ func TestLoginFailsCleanlyWhenCredentialsDoNotFit(t *testing.T) {
 		t.Error("a half-saved sign-in is in the keyring")
 	}
 }
+
+// Another process signed in while this login waited for the browser: its refresh token is ended
+// after the new one is stored.
+func TestLoginRevokesSignInOfOtherProcess(t *testing.T) {
+	for _, revokeStatus := range []int{0, http.StatusInternalServerError} {
+		fs := newFakeOAuthServer(t)
+		fs.revokeStatus = revokeStatus
+		st := &memStore{}
+		m := testManager(t, fs, st)
+		warn := &bytes.Buffer{}
+		m.Warn = warn
+		other := fmt.Sprintf("rt-other-%d", 1)
+		browser := browserFor(t, fs)
+		m.Now = func() time.Time { return time.Now() }
+		open := func(addr string) error {
+			// the other process stores its sign-in under the same host while this one waits
+			c := mustCredentials(t, st, m.Origin)
+			c.RefreshToken, c.GrantStartedAt, c.RefreshedAt = other, time.Now(), time.Now()
+			if err := saveCredentials(st, m.Origin, c); err != nil {
+				t.Error(err)
+			}
+			return browser(addr)
+		}
+		if _, err := m.Login(context.Background(), LoginOptions{OpenBrowser: open, Timeout: 10 * time.Second}); err != nil {
+			t.Fatalf("status %d: %v", revokeStatus, err)
+		}
+		got := mustCredentials(t, st, m.Origin)
+		if got.RefreshToken == other || got.RefreshToken == "" {
+			t.Errorf("stored refresh token = %q, want the new one", got.RefreshToken)
+		}
+		fs.mu.Lock()
+		revoked := fs.revokeForm.Get("token")
+		fs.mu.Unlock()
+		if n := fs.stats().revokes; n != 1 || revoked != other {
+			t.Errorf("revokes = %d of %q, want the other process's token once", n, revoked)
+		}
+		if failed := revokeStatus != 0; failed != strings.Contains(warn.String(), "previous sign-in") {
+			t.Errorf("status %d: hint = %q", revokeStatus, warn)
+		}
+	}
+}

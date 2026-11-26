@@ -136,6 +136,7 @@ func (m *Manager) Login(ctx context.Context, o LoginOptions) (*Credentials, erro
 			return nil, storeError(err)
 		}
 	}
+	startRefresh := cred.RefreshToken
 	// The wait for the browser runs without the lock, so other uptimeify processes can renew.
 	release()
 
@@ -195,6 +196,17 @@ func (m *Manager) Login(ctx context.Context, o LoginOptions) (*Credentials, erro
 		return nil, err
 	}
 	defer release()
+	// Another process may have signed in while this one waited for the browser. Read the stored
+	// sign-in again: if it holds another refresh token than the one this login started with, that
+	// token is ended after the new one is stored.
+	var other *Credentials
+	switch cur, err := loadCredentials(m.Store, m.Origin); {
+	case errors.Is(err, ErrNotFound):
+	case err != nil:
+		return nil, storeError(err)
+	case cur.RefreshToken != "" && cur.RefreshToken != startRefresh:
+		other = cur
+	}
 
 	tr, err := m.OAuth.Exchange(ctx, cred.ClientID, code, p.verifier, redirectURI)
 	if err != nil {
@@ -226,6 +238,11 @@ func (m *Manager) Login(ctx context.Context, o LoginOptions) (*Credentials, erro
 		return nil, clierr.New(clierr.Auth, "signed in, but the system keyring did not store the sign-in (%v): run `uptimeify auth login` again", err)
 	}
 	m.keepAccess(&Access{Token: tr.AccessToken, ExpiresAt: now.Add(time.Duration(tr.ExpiresIn) * time.Second)})
+	if other != nil && other.RefreshToken != tr.RefreshToken {
+		if err := m.revokeQuietly(other.ClientID, other.RefreshToken); err != nil && m.Warn != nil {
+			fmt.Fprintf(m.Warn, "Note: could not end the previous sign-in on the server (%s). It ends by itself after 7 days without use, or disconnect the device under Connected apps.\n", sanitize.Line(err.Error()))
+		}
+	}
 	return cred, nil
 }
 

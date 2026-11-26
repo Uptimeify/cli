@@ -9,6 +9,9 @@ import (
 	"github.com/uptimeify/cli/internal/clierr"
 )
 
+// refreshTimeout bounds the token request of a renewal, which does not follow the command's context.
+const refreshTimeout = 30 * time.Second
+
 var _ client.TokenSource = (*Manager)(nil)
 
 // LogoutResult says what auth logout did. A failed revocation does not stop the local sign-out.
@@ -71,7 +74,12 @@ func (m *Manager) refresh(ctx context.Context, rejected string) (string, error) 
 		return "", notSignedIn()
 	}
 
-	tr, err := m.OAuth.Refresh(ctx, cred.ClientID, cred.RefreshToken)
+	// The request is not tied to ctx: once it is sent, the server rotates the refresh token, and a
+	// cancelled command (Ctrl-C) must still store the answer, or the sign-in is lost. It has a
+	// time limit of its own.
+	rctx, stop := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
+	defer stop()
+	tr, err := m.OAuth.Refresh(rctx, cred.ClientID, cred.RefreshToken)
 	if err != nil {
 		var notSent *NotSentError
 		var limited *RateLimitError
@@ -106,6 +114,10 @@ func (m *Manager) refresh(ctx context.Context, rejected string) (string, error) 
 		return "", clierr.New(clierr.Auth, "the sign-in was renewed, but the system keyring did not store it (%v): run `uptimeify auth login`", err)
 	}
 	m.keepAccess(&Access{Token: tr.AccessToken, ExpiresAt: now.Add(time.Duration(tr.ExpiresIn) * time.Second)})
+	// Reported only now, after the result is stored.
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	return tr.AccessToken, nil
 }
 

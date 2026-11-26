@@ -532,3 +532,29 @@ func TestAccessTokenOf3000BytesStaysInTheProcess(t *testing.T) {
 		t.Error("the rotated refresh token was not stored")
 	}
 }
+
+// A cancelled command must not lose the rotated refresh token: the server has already rotated it.
+func TestRefreshSurvivesCancellation(t *testing.T) {
+	fs := newFakeOAuthServer(t)
+	fs.refreshDelay = 400 * time.Millisecond
+	st := &memStore{}
+	now := time.Now()
+	m, seed := signedIn(t, fs, st, now, now.Add(-time.Minute))
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	_, err := m.Token(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the cancellation reported", err)
+	}
+	c := mustCredentials(t, st, m.Origin)
+	if c.RefreshToken == seed.RefreshToken || c.RefreshToken == "" {
+		t.Fatalf("stored refresh token = %q, want the rotated one", c.RefreshToken)
+	}
+	tok, err := m.Token(context.Background())
+	if err != nil || tok == "" {
+		t.Fatalf("next command: %q, %v", tok, err)
+	}
+	if got := fs.stats(); got.refreshes != 1 || got.invalidGrants != 0 {
+		t.Errorf("refreshes = %d, invalid grants = %d, want 1 and 0 (old refresh token seen once)", got.refreshes, got.invalidGrants)
+	}
+}
