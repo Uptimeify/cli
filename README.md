@@ -163,9 +163,14 @@ nor writes the keyring; `auth status` says so, and `auth login` stops and asks y
 Servers, CI jobs and containers usually have no keyring. There `auth login` fails with an error, and
 `UPTIMEIFY_TOKEN` is the only way to sign in. The CLI never falls back to a file.
 
-The browser sign-in works only at the main host (`https://uptimeify.io`, or the host in
-`UPTIMEIFY_API_URL` when it serves the CLI sign-in itself). It does not work on customer domains or
-white-label hosts. Use `UPTIMEIFY_TOKEN` there.
+The browser sign-in works only at the main host, `https://uptimeify.io`. The list is fixed in the
+program: no flag and no environment variable adds a host, because an injected `UPTIMEIFY_API_URL`
+would otherwise open an attacker's page as "Uptimeify login". Any other host makes `auth login` stop
+with exit code 2; there, and on customer domains and white-label hosts, keep using
+`UPTIMEIFY_TOKEN`. The one exception is `http://127.0.0.1:<port>` together with
+`UPTIMEIFY_ALLOW_INSECURE_LOOPBACK=1`, which is for acceptance runs. `auth login` names the host in
+the first line on stderr before it opens anything. `auth status` and `UPTIMEIFY_TOKEN` work at every
+host as before.
 
 ## Environment variables
 
@@ -205,6 +210,15 @@ What is implemented today:
 - A browser sign-in (client ID, refresh token, access token) is kept only in the system keyring:
   the macOS Keychain, the Windows Credential Manager, or the Secret Service on Linux. It is never
   written to a file. Without a keyring there is no browser sign-in, only `UPTIMEIFY_TOKEN`.
+- The keyring protects the sign-in from other users of the computer and from plain text on disk. It
+  does not protect it from your own processes: on macOS the entries are created through
+  `/usr/bin/security`, and any process running as the same user can read them without a prompt.
+  Treat a computer where untrusted programs run as your user as unsafe for a browser sign-in.
+- A keyring entry has a size limit (about 1.9 KB on macOS, 2560 bytes on Windows). The access token
+  is a separate entry; if a long one does not fit, the CLI keeps it in memory for that command,
+  prints one note on stderr and renews it again with the next command. The record with the refresh
+  token must fit: if it does not, `auth login` fails with a clear message and ends the refresh token
+  it was given on the server.
 - No secret appears in the process list. There is no token flag. On macOS the keyring entry is
   passed to `/usr/bin/security` on standard input, not as an argument. The browser is started
   without a shell and receives only the sign-in address, which is useless without the PKCE
