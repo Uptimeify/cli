@@ -63,13 +63,13 @@ jobs:
       - name: scripts parse
         run: |
           for f in scripts/install.sh scripts/install_test.sh; do sh -n "$f"; done
-          for f in scripts/check-commit-messages.sh scripts/acceptance.sh; do bash -n "$f"; done
+          for f in scripts/check-commit-messages.sh scripts/acceptance.sh scripts/acceptance-login.sh; do bash -n "$f"; done
       - name: shellcheck
         run: |
           # koalaman/shellcheck v0.11.0, pinned by digest
           sc() { docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d "$@"; }
           sc -s sh scripts/install.sh scripts/install_test.sh
-          sc -S warning scripts/check-commit-messages.sh scripts/acceptance.sh
+          sc -S warning scripts/check-commit-messages.sh scripts/acceptance.sh scripts/acceptance-login.sh
       - run: scripts/install_test.sh
       # Same install as release.yml: `go install` is verified by the Go checksum database,
       # goreleaser-action is not (it only warns when its own verification fails).

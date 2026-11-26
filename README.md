@@ -263,6 +263,29 @@ deletes one tag. It refuses any host except `127.0.0.1` and `localhost`, unless
     UPTIMEIFY_API_URL=http://127.0.0.1:3001 UPTIMEIFY_ALLOW_INSECURE_LOOPBACK=1 \
       UPTIMEIFY_TOKEN=... scripts/acceptance.sh
 
+`scripts/acceptance-login.sh` checks the browser sign-in of the built binary (`make build`) against a
+non-production instance that has browser sign-in switched on. It runs `auth login --no-browser`
+and plays the browser over HTTP: it signs in with a dedicated account, confirms the password,
+grants consent (only the `api:` scopes) and calls the CLI's loopback receiver. The account must be
+an organization admin without a second factor. The script registers two devices (the server allows
+five registrations per hour per IP) and creates and deletes one tag.
+
+It writes to your real system keychain (service `uptimeify-cli`), but only to the entries named
+after the instance under test, `http://127.0.0.1:<port>` and `http://127.0.0.1:<port> access`, so it
+never touches the entries for `https://uptimeify.io`. It says so when it starts, signs out at the
+end (also on Ctrl-C) and checks that nothing is left. Every CLI call has a time limit; if a keychain
+dialog waits for a click, the run stops with a message. Only `http://127.0.0.1:<port>` is accepted.
+It never prints a token, an authorization code or the authorize address. Read the password without
+echo:
+
+    make build
+    read -rs UPTIMEIFY_ACCEPTANCE_PASSWORD && export UPTIMEIFY_ACCEPTANCE_PASSWORD
+    UPTIMEIFY_API_URL=http://127.0.0.1:3047 UPTIMEIFY_ALLOW_INSECURE_LOOPBACK=1 \
+      UPTIMEIFY_ACCEPTANCE_EMAIL=admin@example.test scripts/acceptance-login.sh
+
+In the Uptimeify monorepo, `make sandbox-cli-acceptance` builds this repository, starts a
+throwaway app with a throwaway account and runs the script against it.
+
 ## License
 
 MPL-2.0, see [LICENSE](LICENSE).
