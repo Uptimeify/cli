@@ -160,11 +160,12 @@ step_up() {
 }
 
 # start_login: starts `auth login --no-browser` in the background and reads the authorize address
-# from its stderr (at most 10 seconds).
+# from its stderr (at most 10 seconds). $login_extra holds extra flags (unquoted on purpose).
 start_login() {
   : >"$tmp/login.out"
   : >"$tmp/login.err"
-  "$bin" auth login --no-browser >"$tmp/login.out" 2>"$tmp/login.err" &
+  # shellcheck disable=SC2086
+  "$bin" auth login --no-browser ${login_extra:-} >"$tmp/login.out" 2>"$tmp/login.err" &
   login_pid=$!
   # The wait for the browser has its own limit of 150 s (the CLI's own is 5 minutes).
   ( sleep 150; kill "$login_pid" 2>/dev/null ) &
@@ -255,12 +256,15 @@ case "$(uname -s)" in
   Linux) command -v secret-tool >/dev/null 2>&1 && kt=secret-tool ;;
 esac
 
-# keyring_entry ACTION ACCOUNT: ACTION is delete or exists, on the CLI's entries (service
-# uptimeify-cli). Never prints a secret. Returns 2 without a keyring tool.
+# keyring_entry ACTION ACCOUNT: ACTION is delete, exists or size, on the CLI's entries (service
+# uptimeify-cli). Never prints a secret: size prints only the byte count of the stored value.
+# Returns 2 without a keyring tool.
 keyring_entry() {
   case "$kt:$1" in
     security:delete) run_t 20 security delete-generic-password -s uptimeify-cli -a "$2" >/dev/null 2>&1 ;;
     security:exists) run_t 20 security find-generic-password -s uptimeify-cli -a "$2" >/dev/null 2>&1 ;;
+    security:size) run_t 20 security find-generic-password -s uptimeify-cli -a "$2" -w 2>/dev/null | wc -c | tr -d ' ' ;;
+    secret-tool:size) run_t 20 secret-tool lookup service uptimeify-cli username "$2" 2>/dev/null | wc -c | tr -d ' ' ;;
     secret-tool:delete) run_t 20 secret-tool clear service uptimeify-cli username "$2" >/dev/null 2>&1 ;;
     secret-tool:exists) run_t 20 secret-tool lookup service uptimeify-cli username "$2" >/dev/null 2>&1 ;;
     *) return 2 ;;
@@ -277,8 +281,12 @@ desc="L0 the account signs in (browser session for the consent step)"; check sig
 cli auth status >"$tmp/status.out" 2>&1 || true
 desc="L1 auth status before the login shows Token: not set"; check grep -qF 'Token: not set' "$tmp/status.out"
 
+# The default sign-in is read only. The tag steps below write, so this one asks for --write, and for
+# every separate scope too: that is the longest access token the server can issue (see L5).
+login_extra="--write --scope api:users:read --scope api:users:write --scope api:billing:read --scope api:billing:write --scope api:audit:read --scope api:statuspage-subscribers:read"
 login_flow ""
-desc="L2 auth login --no-browser with the default scopes exits 0 (got $login_rc)"; check test "$login_rc" -eq 0
+login_extra=""
+desc="L2 auth login --no-browser with every scope exits 0 (got $login_rc)"; check test "$login_rc" -eq 0
 desc="L2 auth login reports the sign-in"; check grep -qF 'Signed in to' "$tmp/login.out"
 
 code="$(query_param code "$redirect")"
@@ -294,6 +302,21 @@ desc="L5 auth status names the browser sign-in"; check grep -qF 'browser sign-in
 desc="L5 auth status shows the organization"; check awk '/^  Organization:/ { found = 1; if ($0 ~ /unavailable/) bad = 1 } END { exit !(found && !bad) }' "$tmp/status.out"
 desc="L5 auth status lists api:monitors:write"; check grep -qF 'api:monitors:write' "$tmp/status.out"
 desc="L5 auth status says when the sign-in ends"; check grep -qF 'Sign-in ends:' "$tmp/status.out"
+desc="L5 auth status lists the separate scope api:statuspage-subscribers:read"; check grep -qF 'api:statuspage-subscribers:read' "$tmp/status.out"
+
+# Keyring limits. macOS: go-keyring passes the value to security(1) hex encoded and refuses a
+# command over 4096 characters, which leaves about 2000 bytes for the stored value (base64 of the
+# JSON). Windows Credential Manager: 2560 bytes. An access token that does not fit is not an error
+# (the CLI keeps it in memory and renews on every command), but it is slow, so this run fails
+# early, at 1950 bytes, when every scope together comes close to the limit.
+if [ -n "${kt:-}" ]; then
+  size_access="$(keyring_entry size "$origin access" || true)"
+  size_refresh="$(keyring_entry size "$origin" || true)"
+  desc="L5 stored access entry with every scope is under 1950 bytes (got ${size_access:-?})"; check test "${size_access:-0}" -gt 0 -a "${size_access:-9999}" -lt 1950
+  desc="L5 stored sign-in entry is under 1950 bytes (got ${size_refresh:-?})"; check test "${size_refresh:-0}" -gt 0 -a "${size_refresh:-9999}" -lt 1950
+else
+  desc="L5 stored entry sizes (no keyring tool to read them)"; skip
+fi
 
 # Tag names are limited to 24 characters and need a color.
 name="cliacc-$$"
